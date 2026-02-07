@@ -1,0 +1,49 @@
+# Generated output
+output/
+.planning/
+*.tmp
+*.bak
+*.swp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# Node (if any)
+node_modules/
+
+# Logs
+*.log
+
+# Archives (don't commit zips)
+*.zip
+*.tar.gz
+
+# Screenshots (generated during analysis)
+screenshots/
+
+# Temporary analysis files
+*-AUDIT-REPORT.md
+*-ACTION-PLAN.md

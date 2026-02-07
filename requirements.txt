@@ -1,0 +1,10 @@
+# SEO PRO - Python Dependencies
+# Bounded version pinning with security-conscious minimums
+
+beautifulsoup4>=4.12.0,<5.0.0
+requests>=2.31.0,<3.0.0
+lxml>=5.3.2,<7.0.0          # Minimum 5.3.2 for CVE-2025-24928 fix
+playwright>=1.50.0,<2.0.0
+Pillow>=11.0.0,<13.0.0
+urllib3>=2.0.0,<3.0.0
+validators>=0.22.0,<1.0.0
