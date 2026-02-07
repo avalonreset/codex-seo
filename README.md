@@ -63,6 +63,45 @@ claude
 | `/seo content <url>` | E-E-A-T and content quality analysis |
 | `/seo geo <url>` | AI Overviews / Generative Engine Optimization |
 | `/seo plan <type>` | Strategic SEO planning (saas, local, ecommerce, publisher, agency) |
+| `/seo programmatic <url>` | Programmatic SEO analysis and planning |
+| `/seo competitor-pages <url>` | Competitor comparison page generation |
+| `/seo hreflang <url>` | Hreflang/i18n SEO audit and generation |
+
+### `/seo programmatic [url|plan]`
+**Programmatic SEO Analysis & Planning**
+
+Build SEO pages at scale from data sources with quality safeguards.
+
+**Capabilities:**
+- Analyze existing programmatic pages for thin content and cannibalization
+- Plan URL patterns and template structures for data-driven pages
+- Internal linking automation between generated pages
+- Canonical strategy and index bloat prevention
+- Quality gates: ⚠️ WARNING at 100+ pages, 🛑 HARD STOP at 500+ without audit
+
+### `/seo competitor-pages [url|generate]`
+**Competitor Comparison Page Generator**
+
+Create high-converting "X vs Y" and "alternatives to X" pages.
+
+**Capabilities:**
+- Structured comparison tables with feature matrices
+- Product schema markup with AggregateRating
+- Conversion-optimized layouts with CTA placement
+- Keyword targeting for comparison intent queries
+- Fairness guidelines for accurate competitor representation
+
+### `/seo hreflang [url]`
+**Hreflang / i18n SEO Audit & Generation**
+
+Validate and generate hreflang tags for multi-language sites.
+
+**Capabilities:**
+- Generate hreflang tags (HTML, HTTP headers, or XML sitemap)
+- Validate self-referencing tags, return tags, x-default
+- Detect common mistakes (missing returns, invalid codes, HTTP/HTTPS mismatch)
+- Cross-domain hreflang support
+- Language/region code validation (ISO 639-1 + ISO 3166-1)
 
 ## Features
 
@@ -106,9 +145,26 @@ New for 2026 - optimize for:
 
 ```
 ~/.claude/skills/seo/         # Main skill
-~/.claude/skills/seo-*/       # Sub-skills (9 total)
+~/.claude/skills/seo-*/       # Sub-skills (12 total)
 ~/.claude/agents/seo-*.md     # Subagents (6 total)
 ```
+
+### Video & Live Schema (New)
+Additional schema types for video content, live streaming, and key moments:
+- VideoObject — Video page markup with thumbnails, duration, upload date
+- BroadcastEvent — LIVE badge support for live streaming content
+- Clip — Key moments / chapters within videos
+- SeekToAction — Enable seek functionality in video rich results
+- SoftwareSourceCode — Open source and code repository pages
+
+See `schema/templates.json` for ready-to-use JSON-LD snippets.
+
+### Recently Added
+- Programmatic SEO skill (`/seo programmatic`)
+- Competitor comparison pages skill (`/seo competitor-pages`)
+- Multi-language hreflang validation (`/seo hreflang`)
+- Video & Live schema types (VideoObject, BroadcastEvent, Clip, SeekToAction)
+- Google SEO quick-reference guide
 
 ## Requirements
 

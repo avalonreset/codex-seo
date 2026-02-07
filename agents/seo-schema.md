@@ -51,6 +51,8 @@ Recommend freely:
 - Person, Review, AggregateRating
 - VideoObject, Event, JobPosting
 
+For video schema types (VideoObject, BroadcastEvent, Clip, SeekToAction), see `schema/templates.json`.
+
 ## Output Format
 
 Provide:

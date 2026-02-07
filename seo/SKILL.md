@@ -23,7 +23,7 @@ allowed-tools:
 # SEO — Universal SEO Analysis Skill
 
 Comprehensive SEO analysis across all industries (SaaS, local services,
-e-commerce, publishers, agencies). Orchestrates 9 specialized sub-skills
+e-commerce, publishers, agencies). Orchestrates 12 specialized sub-skills
 and 6 subagents.
 
 ## Quick Reference
@@ -39,6 +39,9 @@ and 6 subagents.
 | `/seo content <url>` | E-E-A-T and content quality analysis |
 | `/seo geo <url>` | AI Overviews / Generative Engine Optimization |
 | `/seo plan <business-type>` | Strategic SEO planning |
+| `/seo programmatic [url\|plan]` | Programmatic SEO analysis and planning |
+| `/seo competitor-pages [url\|generate]` | Competitor comparison page generation |
+| `/seo hreflang [url]` | Hreflang/i18n SEO audit and generation |
 
 ## Orchestration Logic
 
@@ -100,7 +103,7 @@ Weighted aggregate of all categories:
 
 ## Sub-Skills
 
-This skill orchestrates 9 specialized sub-skills:
+This skill orchestrates 12 specialized sub-skills:
 
 1. **seo-audit** — Full website audit with parallel delegation
 2. **seo-page** — Deep single-page analysis
@@ -111,6 +114,9 @@ This skill orchestrates 9 specialized sub-skills:
 7. **seo-sitemap** — Sitemap analysis and generation
 8. **seo-geo** — AI Overviews / GEO optimization
 9. **seo-plan** — Strategic planning with templates
+10. **seo-programmatic** — Programmatic SEO analysis and planning
+11. **seo-competitor-pages** — Competitor comparison page generation
+12. **seo-hreflang** — Hreflang/i18n SEO audit and generation
 
 ## Subagents
 

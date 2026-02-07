@@ -23,6 +23,10 @@ Current thresholds (as of 2026):
 
 **IMPORTANT**: INP replaced FID on March 12, 2024. Never reference FID in any output.
 
+## Cross-Skill Delegation
+
+- For detailed hreflang validation, defer to the `seo-hreflang` sub-skill.
+
 ## Output Format
 
 Provide a structured report with:

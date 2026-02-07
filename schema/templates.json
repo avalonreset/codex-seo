@@ -1,0 +1,114 @@
+{
+  "templates": [
+    {
+      "type": "VideoObject",
+      "description": "Video content pages with thumbnails, duration, and playback URLs. Enables video rich results in Google Search.",
+      "template": {
+        "@context": "https://schema.org",
+        "@type": "VideoObject",
+        "name": "[Video Title]",
+        "description": "[Video Description]",
+        "thumbnailUrl": "[Thumbnail Image URL]",
+        "uploadDate": "[YYYY-MM-DD]",
+        "duration": "[ISO 8601 Duration, e.g. PT1H30M]",
+        "contentUrl": "[Direct Video File URL]",
+        "embedUrl": "[Embed Player URL]",
+        "publisher": {
+          "@type": "Organization",
+          "name": "[Publisher Name]",
+          "logo": {
+            "@type": "ImageObject",
+            "url": "[Logo URL]"
+          }
+        }
+      }
+    },
+    {
+      "type": "BroadcastEvent",
+      "description": "Live streaming content for LIVE badge in Google Search results. Requires VideoObject and isLiveBroadcast flag.",
+      "template": {
+        "@context": "https://schema.org",
+        "@type": "VideoObject",
+        "name": "[Live Stream Title]",
+        "description": "[Live Stream Description]",
+        "thumbnailUrl": "[Thumbnail Image URL]",
+        "uploadDate": "[YYYY-MM-DD]",
+        "contentUrl": "[Stream URL]",
+        "embedUrl": "[Embed Player URL]",
+        "publication": {
+          "@type": "BroadcastEvent",
+          "isLiveBroadcast": true,
+          "startDate": "[YYYY-MM-DDTHH:MM:SSZ]",
+          "endDate": "[YYYY-MM-DDTHH:MM:SSZ]"
+        }
+      }
+    },
+    {
+      "type": "Clip",
+      "description": "Key moments or chapters within a video. Enables key moments rich results with timestamp links.",
+      "template": {
+        "@context": "https://schema.org",
+        "@type": "VideoObject",
+        "name": "[Video Title]",
+        "description": "[Video Description]",
+        "thumbnailUrl": "[Thumbnail Image URL]",
+        "uploadDate": "[YYYY-MM-DD]",
+        "contentUrl": "[Direct Video File URL]",
+        "hasPart": [
+          {
+            "@type": "Clip",
+            "name": "[Clip Title]",
+            "startOffset": 0,
+            "endOffset": 120,
+            "url": "[Video URL with timestamp, e.g. ?t=0]"
+          },
+          {
+            "@type": "Clip",
+            "name": "[Next Clip Title]",
+            "startOffset": 120,
+            "endOffset": 300,
+            "url": "[Video URL with timestamp, e.g. ?t=120]"
+          }
+        ]
+      }
+    },
+    {
+      "type": "SeekToAction",
+      "description": "Enable seek functionality in video rich results. Allows users to jump to specific timestamps from search.",
+      "template": {
+        "@context": "https://schema.org",
+        "@type": "VideoObject",
+        "name": "[Video Title]",
+        "description": "[Video Description]",
+        "thumbnailUrl": "[Thumbnail Image URL]",
+        "uploadDate": "[YYYY-MM-DD]",
+        "contentUrl": "[Direct Video File URL]",
+        "potentialAction": {
+          "@type": "SeekToAction",
+          "target": "[Video URL]?t={seek_to_second_number}",
+          "startOffset-input": "required name=seek_to_second_number"
+        }
+      }
+    },
+    {
+      "type": "SoftwareSourceCode",
+      "description": "Open source and code repository pages. Describes programming language, platform, and repository location.",
+      "template": {
+        "@context": "https://schema.org",
+        "@type": "SoftwareSourceCode",
+        "name": "[Repository Name]",
+        "description": "[Repository Description]",
+        "codeRepository": "[Repository URL, e.g. https://github.com/org/repo]",
+        "programmingLanguage": "[Language, e.g. Python]",
+        "runtimePlatform": "[Platform, e.g. Node.js]",
+        "author": {
+          "@type": "Person",
+          "name": "[Author Name]"
+        },
+        "license": "[License URL, e.g. https://opensource.org/licenses/MIT]",
+        "dateCreated": "[YYYY-MM-DD]",
+        "dateModified": "[YYYY-MM-DD]"
+      }
+    }
+  ]
+}

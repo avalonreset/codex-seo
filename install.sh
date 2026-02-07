@@ -48,6 +48,18 @@ main() {
         done
     fi
 
+    # Copy schema templates
+    if [ -d "${TEMP_DIR}/claude-seo/schema" ]; then
+        mkdir -p "${SKILL_DIR}/schema"
+        cp -r "${TEMP_DIR}/claude-seo/schema/"* "${SKILL_DIR}/schema/"
+    fi
+
+    # Copy reference docs
+    if [ -d "${TEMP_DIR}/claude-seo/pdf" ]; then
+        mkdir -p "${SKILL_DIR}/pdf"
+        cp -r "${TEMP_DIR}/claude-seo/pdf/"* "${SKILL_DIR}/pdf/"
+    fi
+
     # Copy agents
     echo "→ Installing subagents..."
     cp -r "${TEMP_DIR}/claude-seo/agents/"*.md "${AGENT_DIR}/" 2>/dev/null || true

@@ -58,6 +58,22 @@ if (Test-Path $SkillsPath) {
     }
 }
 
+# Copy schema templates
+$SchemaPath = "$TempDir\schema"
+if (Test-Path $SchemaPath) {
+    $SkillSchema = "$SkillDir\schema"
+    New-Item -ItemType Directory -Force -Path $SkillSchema | Out-Null
+    Copy-Item -Recurse -Force "$SchemaPath\*" $SkillSchema
+}
+
+# Copy reference docs
+$PdfPath = "$TempDir\pdf"
+if (Test-Path $PdfPath) {
+    $SkillPdf = "$SkillDir\pdf"
+    New-Item -ItemType Directory -Force -Path $SkillPdf | Out-Null
+    Copy-Item -Recurse -Force "$PdfPath\*" $SkillPdf
+}
+
 # Copy agents
 Write-Host "→ Installing subagents..." -ForegroundColor Yellow
 Copy-Item -Force "$TempDir\agents\*.md" $AgentDir 2>$null

@@ -44,6 +44,11 @@ AI content is acceptable IF it demonstrates genuine E-E-A-T. Flag these markers 
 - Factual inaccuracies
 - Repetitive structure across pages
 
+## Cross-Skill Delegation
+
+- For evaluating programmatically generated pages, defer to the `seo-programmatic` sub-skill.
+- For comparison page content standards, see `seo-competitor-pages`.
+
 ## Output Format
 
 Provide:
