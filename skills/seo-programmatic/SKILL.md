@@ -1,3 +1,4 @@
+<!-- Updated: 2026-02-07 -->
 ---
 name: seo-programmatic
 description: >
@@ -72,6 +73,23 @@ Design templates that produce unique, valuable pages:
 | Pages without justification | 500+ | 🛑 HARD STOP — require explicit user approval and thin content audit |
 | Unique content per page | <40% | ❌ Flag as thin content — likely penalty risk |
 | Word count per page | <300 | ⚠️ Flag for review — may lack sufficient value |
+
+### Scaled Content Abuse — Enforcement Context (2025-2026)
+
+Google's Scaled Content Abuse policy (introduced March 2024) saw major enforcement escalation in 2025:
+
+- **June 2025:** Wave of manual actions targeting websites with AI-generated content at scale
+- **August 2025:** SpamBrain spam update enhanced pattern detection for AI-generated link schemes and content farms
+- **Result:** Google reported 45% reduction in low-quality, unoriginal content in search results post-March 2024 enforcement
+
+**Enhanced quality gates for programmatic pages:**
+- **Content differentiation:** ≥30-40% of content must be genuinely unique between any two programmatic pages (not just city/keyword string replacement)
+- **Human review:** Minimum 5-10% sample review of generated pages before publishing
+- **Progressive rollout:** Publish in batches of 50-100 pages. Monitor indexing and rankings for 2-4 weeks before expanding. Never publish 500+ programmatic pages simultaneously without explicit quality review.
+- **Standalone value test:** Each page should pass: "Would this page be worth publishing even if no other similar pages existed?"
+- **Site reputation abuse:** If publishing programmatic content under a high-authority domain (not your own), this may trigger site reputation abuse penalties. Google began enforcing this aggressively in November 2024.
+
+> **Recommendation:** The WARNING gate at `<40% unique content` remains appropriate. Consider a HARD STOP at `<30%` unique content to prevent scaled content abuse risk.
 
 ### Safe Programmatic Pages (OK at scale)
 ✅ Integration pages (with real setup docs, API details, screenshots)
