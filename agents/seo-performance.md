@@ -1,4 +1,3 @@
-<!-- Updated: 2026-02-07 -->
 ---
 name: seo-performance
 description: Performance analyzer. Measures and evaluates Core Web Vitals and page load performance.

@@ -102,6 +102,14 @@ def main():
 
     args = parser.parse_args()
 
+    # Sanitize output path — prevent directory traversal
+    output_dir = os.path.realpath(args.output)
+    cwd = os.getcwd()
+    home = os.path.expanduser("~")
+    if not (output_dir.startswith(cwd) or output_dir.startswith(home)):
+        print("Error: Output path must be within current directory or home directory", file=sys.stderr)
+        sys.exit(1)
+
     # Create output directory
     os.makedirs(args.output, exist_ok=True)
 

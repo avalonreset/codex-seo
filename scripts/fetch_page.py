@@ -8,6 +8,8 @@ Usage:
 """
 
 import argparse
+import ipaddress
+import socket
 import sys
 from typing import Optional
 from urllib.parse import urlparse
@@ -70,6 +72,16 @@ def fetch_page(
     if parsed.scheme not in ("http", "https"):
         result["error"] = f"Invalid URL scheme: {parsed.scheme}"
         return result
+
+    # SSRF prevention: block private/internal IPs
+    try:
+        resolved_ip = socket.gethostbyname(parsed.hostname)
+        ip = ipaddress.ip_address(resolved_ip)
+        if ip.is_private or ip.is_loopback or ip.is_reserved:
+            result["error"] = f"Blocked: URL resolves to private/internal IP ({resolved_ip})"
+            return result
+    except (socket.gaierror, ValueError):
+        pass  # DNS resolution failure handled by requests below
 
     try:
         session = requests.Session()

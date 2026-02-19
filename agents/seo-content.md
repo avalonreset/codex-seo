@@ -1,4 +1,3 @@
-<!-- Updated: 2026-02-07 -->
 ---
 name: seo-content
 description: Content quality reviewer. Evaluates E-E-A-T signals, readability, content depth, AI citation readiness, and thin content detection.

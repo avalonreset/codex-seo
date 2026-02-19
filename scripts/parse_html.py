@@ -9,6 +9,7 @@ Usage:
 
 import argparse
 import json
+import os
 import re
 import sys
 from typing import Optional
@@ -164,7 +165,11 @@ def main():
     args = parser.parse_args()
 
     if args.file:
-        with open(args.file, "r", encoding="utf-8") as f:
+        real_path = os.path.realpath(args.file)
+        if not os.path.isfile(real_path):
+            print(f"Error: File not found: {args.file}", file=sys.stderr)
+            sys.exit(1)
+        with open(real_path, "r", encoding="utf-8") as f:
             html = f.read()
     else:
         html = sys.stdin.read()

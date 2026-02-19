@@ -36,14 +36,49 @@ curl -fsSL https://raw.githubusercontent.com/AgriciDaniel/claude-seo/main/instal
 **Symptom:** `ModuleNotFoundError: No module named 'requests'`
 
 **Solution:**
+
+As of v1.2.0, dependencies are installed in a venv. Try:
+
 ```bash
-pip install -r ~/.claude/skills/seo/requirements.txt
+# Use the venv pip
+~/.claude/skills/seo/.venv/bin/pip install -r ~/.claude/skills/seo/requirements.txt
+```
+
+If the venv doesn't exist, install with `--user`:
+```bash
+pip install --user -r ~/.claude/skills/seo/requirements.txt
 ```
 
 Or install individually:
 ```bash
-pip install beautifulsoup4 requests lxml playwright Pillow urllib3 validators
+pip install --user beautifulsoup4 requests lxml playwright Pillow urllib3 validators
 ```
+
+### requirements.txt Not Found
+
+**Symptom:** `No such file: requirements.txt` after install
+
+**Solution:** As of v1.2.0, requirements.txt is copied to the skill directory:
+
+```bash
+ls ~/.claude/skills/seo/requirements.txt
+```
+
+If missing, download it directly:
+```bash
+curl -fsSL https://raw.githubusercontent.com/AgriciDaniel/claude-seo/main/requirements.txt \
+  -o ~/.claude/skills/seo/requirements.txt
+```
+
+### Windows Python Detection Issues
+
+**Symptom:** `python is not recognized` or `pip points to wrong Python`
+
+**Solution (v1.2.0+):** The Windows installer now tries both `python` and `py -3`. If both fail:
+
+1. Install Python from [python.org](https://python.org) and check "Add to PATH"
+2. Or use the Windows launcher: `py -3 -m pip install -r requirements.txt`
+3. Use `python -m pip` instead of bare `pip`
 
 ---
 

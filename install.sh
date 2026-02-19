@@ -78,16 +78,30 @@ main() {
         chmod +x "${SKILL_DIR}/hooks/"*.py 2>/dev/null || true
     fi
 
-    # Install Python dependencies
-    echo "→ Installing Python dependencies..."
-    pip install --quiet --break-system-packages -r "${TEMP_DIR}/claude-seo/requirements.txt" 2>/dev/null || \
-    pip install --quiet -r "${TEMP_DIR}/claude-seo/requirements.txt" 2>/dev/null || \
-    echo "⚠  Could not auto-install Python packages. Run: pip install -r requirements.txt"
+    # Copy requirements.txt to skill dir so users can retry later
+    cp "${TEMP_DIR}/claude-seo/requirements.txt" "${SKILL_DIR}/requirements.txt" 2>/dev/null || true
 
-    # Optional: Install Playwright browsers
-    echo "→ Installing Playwright browsers (optional)..."
-    python3 -m playwright install chromium 2>/dev/null || \
-    echo "⚠  Playwright browser install failed. Screenshots won't work. Run: playwright install chromium"
+    # Install Python dependencies (venv preferred, --user fallback)
+    echo "→ Installing Python dependencies..."
+    VENV_DIR="${SKILL_DIR}/.venv"
+    if python3 -m venv "${VENV_DIR}" 2>/dev/null; then
+        "${VENV_DIR}/bin/pip" install --quiet -r "${TEMP_DIR}/claude-seo/requirements.txt" 2>/dev/null && \
+            echo "  ✓ Installed in venv at ${VENV_DIR}" || \
+            echo "  ⚠  Venv pip install failed. Run: ${VENV_DIR}/bin/pip install -r ${SKILL_DIR}/requirements.txt"
+    else
+        pip install --quiet --user -r "${TEMP_DIR}/claude-seo/requirements.txt" 2>/dev/null || \
+        echo "  ⚠  Could not auto-install. Run: pip install --user -r ${SKILL_DIR}/requirements.txt"
+    fi
+
+    # Optional: Install Playwright browsers (for screenshot analysis)
+    echo "→ Installing Playwright browsers (optional, for visual analysis)..."
+    if [ -f "${VENV_DIR}/bin/playwright" ]; then
+        "${VENV_DIR}/bin/python" -m playwright install chromium 2>/dev/null || \
+        echo "  ⚠  Playwright install failed. Visual analysis will use WebFetch fallback."
+    else
+        python3 -m playwright install chromium 2>/dev/null || \
+        echo "  ⚠  Playwright install failed. Visual analysis will use WebFetch fallback."
+    fi
 
     echo ""
     echo "✓ Claude SEO installed successfully!"
@@ -96,6 +110,7 @@ main() {
     echo "  1. Start Claude Code:  claude"
     echo "  2. Run commands:       /seo audit https://example.com"
     echo ""
+    echo "Python deps location: ${SKILL_DIR}/requirements.txt"
     echo "To uninstall: curl -fsSL ${REPO_URL}/raw/main/uninstall.sh | bash"
 }
 

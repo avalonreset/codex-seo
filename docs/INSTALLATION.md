@@ -40,16 +40,24 @@ cd claude-seo
 
 3. **Install Python dependencies** (if not done automatically)
 
+The installer creates a venv at `~/.claude/skills/seo/.venv/`. If that fails, install manually:
+
 ```bash
-pip install -r requirements.txt
+# Option A: Use the venv
+~/.claude/skills/seo/.venv/bin/pip install -r ~/.claude/skills/seo/requirements.txt
+
+# Option B: User-level install
+pip install --user -r ~/.claude/skills/seo/requirements.txt
 ```
 
-4. **Install Playwright browsers** (optional, for screenshots)
+4. **Install Playwright browsers** (optional, for visual analysis)
 
 ```bash
 pip install playwright
 playwright install chromium
 ```
+
+Playwright is optional — without it, visual analysis uses WebFetch as a fallback.
 
 ## Installation Paths
 

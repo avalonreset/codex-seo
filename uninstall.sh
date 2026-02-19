@@ -4,7 +4,7 @@ set -euo pipefail
 main() {
     echo "→ Uninstalling Claude SEO..."
 
-    # Remove main skill
+    # Remove main skill (includes venv and requirements.txt)
     rm -rf "${HOME}/.claude/skills/seo"
 
     # Remove sub-skills
