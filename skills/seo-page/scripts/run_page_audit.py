@@ -119,6 +119,15 @@ def tokenize(text: str) -> list[str]:
     return re.findall(r"[a-zA-Z0-9']+", text.lower())
 
 
+def extract_content_text(soup: BeautifulSoup) -> str:
+    region = soup.find("main") or soup.find("article") or soup.body or soup
+    clone = BeautifulSoup(str(region), "html.parser")
+    for node in clone(["script", "style", "noscript", "svg", "canvas", "nav", "header", "footer", "aside"]):
+        node.decompose()
+    text = clone.get_text(" ", strip=True)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def syllables(word: str) -> int:
     w = re.sub(r"[^a-z]", "", word.lower())
     if not w:
@@ -285,7 +294,7 @@ def score_page(data: dict[str, Any]) -> tuple[dict[str, float], float, list[dict
         content -= 10
         issues.append({"priority": "Medium", "title": "Low readability", "detail": f"Flesch score is {data['readability']['flesch']}."})
     kd = data["keyword_density"]["density_pct"]
-    if data["keyword_density"]["keyword"]:
+    if data["keyword_density"]["keyword"] and data["keyword_source"] == "user":
         if kd < 0.3:
             content -= 10
             issues.append({"priority": "Medium", "title": "Keyword underused", "detail": f"Density {kd}% is low for focus phrase."})
@@ -410,7 +419,7 @@ def main() -> int:
     title = soup.title.get_text(" ", strip=True) if soup.title else None
     h1_tags = soup.find_all("h1")
     h1_text = h1_tags[0].get_text(" ", strip=True) if h1_tags else None
-    text = soup.get_text(" ", strip=True)
+    text = extract_content_text(soup)
     words = tokenize(text)
     heading_seq = [int(tag.name[1]) for tag in soup.find_all(re.compile("^h[1-6]$"))]
     heading_skips = 0
@@ -429,6 +438,7 @@ def main() -> int:
         elif h:
             links_external += 1
 
+    keyword_source = "user" if args.keyword else "inferred"
     keyword = args.keyword.lower().strip() if args.keyword else infer_keyword(title, h1_text, final_url)
     schema = parse_schema(soup)
     images = analyze_images(soup, final_url, args.timeout)
@@ -449,6 +459,7 @@ def main() -> int:
         "word_count": len(words),
         "readability": read,
         "keyword_density": keyword_density(text, keyword),
+        "keyword_source": keyword_source,
         "og_complete": all(meta(soup, prop=x) for x in ("og:title", "og:description", "og:image", "og:url")),
         "twitter_complete": all(meta(soup, name=x) for x in ("twitter:card", "twitter:title", "twitter:description")),
         "schema": schema,
@@ -521,6 +532,7 @@ Images:          {scores['images']}/100  {bar(scores['images'])}
 - H1 count: {data['h1_count']}
 - Word count: {data['word_count']}
 - Keyword: `{data['keyword_density']['keyword']}`
+- Keyword source: `{data['keyword_source']}`
 - Keyword density: {data['keyword_density']['density_pct']}%
 - E-E-A-T score: {data['eeat']['score']}%
 - Schema types: {", ".join(data['schema']['types']) if data['schema']['types'] else "None"}
@@ -553,6 +565,7 @@ Images:          {scores['images']}/100  {bar(scores['images'])}
                 "url": data["final_url"],
                 "scores": scores,
                 "overall": overall,
+                "keyword_source": data["keyword_source"],
                 "issues": issues,
                 "schema_suggestions": suggestions,
                 "visual": visual,
