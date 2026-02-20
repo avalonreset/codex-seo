@@ -113,6 +113,30 @@ def try_head(url: str, timeout: int) -> dict[str, Any]:
         return {"ok": False, "status_code": None, "headers": {}}
 
 
+def probe_url(url: str, timeout: int) -> dict[str, Any]:
+    probe = try_head(url, timeout)
+    if probe["ok"]:
+        return {"exists": True, "restricted": False, "status_code": probe["status_code"]}
+    if probe["status_code"] in (405, 403, 401, None):
+        check = fetch_text(url, timeout)
+        if check["ok"]:
+            return {"exists": True, "restricted": False, "status_code": check["status_code"]}
+        if check["status_code"] in (401, 403):
+            return {"exists": True, "restricted": True, "status_code": check["status_code"]}
+    return {"exists": False, "restricted": False, "status_code": probe["status_code"]}
+
+
+def resolve_canonical(base_url: str, canonical_value: str | None) -> str | None:
+    if not canonical_value:
+        return None
+    merged = urljoin(base_url, canonical_value.strip())
+    parsed = urlparse(merged)
+    if parsed.scheme not in ("http", "https"):
+        return None
+    path = parsed.path or "/"
+    return urlunparse((parsed.scheme, parsed.netloc, path, "", parsed.query, ""))
+
+
 def soup_of(html: str) -> BeautifulSoup:
     try:
         return BeautifulSoup(html, "lxml")
@@ -131,6 +155,7 @@ def parse_robots(robots_text: str) -> dict[str, Any]:
     lines = robots_text.splitlines()
     entries: dict[str, dict[str, list[str]]] = {}
     current_agents: list[str] = []
+    seen_directive_in_group = False
     sitemaps: list[str] = []
 
     for raw_line in lines:
@@ -141,9 +166,15 @@ def parse_robots(robots_text: str) -> dict[str, Any]:
         key = key.strip().lower()
         value = value.strip()
         if key == "user-agent":
-            current_agents = [value]
-            if value not in entries:
-                entries[value] = {"allow": [], "disallow": []}
+            agent = value.lower()
+            if seen_directive_in_group:
+                current_agents = [agent]
+                seen_directive_in_group = False
+            else:
+                if agent not in current_agents:
+                    current_agents.append(agent)
+            if agent not in entries:
+                entries[agent] = {"allow": [], "disallow": []}
         elif key in ("allow", "disallow"):
             if not current_agents:
                 continue
@@ -151,12 +182,14 @@ def parse_robots(robots_text: str) -> dict[str, Any]:
                 if agent not in entries:
                     entries[agent] = {"allow": [], "disallow": []}
                 entries[agent][key].append(value)
+            seen_directive_in_group = True
         elif key == "sitemap":
             sitemaps.append(value)
 
     ai_policy: dict[str, str] = {}
     for crawler in AI_CRAWLERS:
-        data = entries.get(crawler)
+        crawler_key = crawler.lower()
+        data = entries.get(crawler_key)
         wildcard = entries.get("*")
         if data is None and wildcard is None:
             ai_policy[crawler] = "unspecified"
@@ -172,6 +205,34 @@ def parse_robots(robots_text: str) -> dict[str, Any]:
             ai_policy[crawler] = "partial"
 
     return {"entries": entries, "sitemaps": sitemaps, "ai_policy": ai_policy}
+
+
+def evaluate_sitemaps(base_url: str, robots_sitemaps: list[str], timeout: int) -> dict[str, Any]:
+    checked: list[str] = []
+    working: list[str] = []
+    restricted: list[str] = []
+
+    candidates = [urljoin(base_url, item) for item in robots_sitemaps if item.strip()]
+    if not candidates:
+        candidates = [urljoin(base_url, "/sitemap.xml")]
+
+    for candidate in candidates:
+        if candidate in checked:
+            continue
+        checked.append(candidate)
+        state = probe_url(candidate, timeout)
+        if state["exists"] and not state["restricted"]:
+            working.append(candidate)
+        elif state["exists"] and state["restricted"]:
+            restricted.append(candidate)
+
+    return {
+        "exists": len(working) > 0 or len(restricted) > 0,
+        "checked_urls": checked,
+        "working_urls": working,
+        "restricted_urls": restricted,
+        "source": "robots" if robots_sitemaps else "default",
+    }
 
 
 def extract_main_text(soup: BeautifulSoup) -> str:
@@ -321,7 +382,23 @@ def compute_scores(data: dict[str, Any]) -> tuple[dict[str, float], float, list[
         add_issue(issues, "High", "Missing robots.txt", "Create robots.txt and define crawler policy.")
     if not data["sitemap"]["exists"]:
         crawlability -= 20
-        add_issue(issues, "High", "Missing sitemap.xml", "Publish sitemap.xml and reference it in robots.txt.")
+        if data["sitemap"]["source"] == "robots" and data["sitemap"]["checked_urls"]:
+            add_issue(
+                issues,
+                "High",
+                "Robots.txt sitemap URLs are unreachable",
+                "Fix or replace declared sitemap URLs in robots.txt.",
+            )
+        else:
+            add_issue(issues, "High", "Missing sitemap.xml", "Publish sitemap.xml and reference it in robots.txt.")
+    elif data["sitemap"]["restricted_urls"] and not data["sitemap"]["working_urls"]:
+        crawlability -= 5
+        add_issue(
+            issues,
+            "Medium",
+            "Sitemap access restricted",
+            "Declared sitemap URL responds with access restrictions (401/403) for this agent.",
+        )
     if data["meta_robots"] and "noindex" in data["meta_robots"].lower():
         crawlability -= 20
         add_issue(issues, "Critical", "Page marked noindex", "Remove noindex if this page should rank.")
@@ -333,6 +410,20 @@ def compute_scores(data: dict[str, Any]) -> tuple[dict[str, float], float, list[
             "Low",
             "All known AI crawlers are blocked",
             "Verify this aligns with your AI visibility strategy.",
+        )
+    if data["robots"]["ai_policy"].get("Google-Extended") == "blocked":
+        add_issue(
+            issues,
+            "Low",
+            "Google-Extended blocked",
+            "This blocks Gemini training use only and does not affect Google Search indexing.",
+        )
+    if data["robots"]["ai_policy"].get("GPTBot") == "blocked" and data["robots"]["ai_policy"].get("ChatGPT-User") != "blocked":
+        add_issue(
+            issues,
+            "Low",
+            "GPTBot blocked but ChatGPT-User not blocked",
+            "Training is blocked while ChatGPT browsing access may still occur.",
         )
     crawlability = clamp(crawlability, 0, 100)
 
@@ -516,7 +607,11 @@ def write_outputs(output_dir: Path, data: dict[str, Any], scores: dict[str, floa
 
 - robots.txt: {data['robots']['exists']}
 - sitemap.xml: {data['sitemap']['exists']}
+- Sitemap source: {data['sitemap']['source']}
 - Sitemaps in robots.txt: {len(data['robots']['sitemaps'])}
+- Sitemap URLs checked: {len(data['sitemap']['checked_urls'])}
+- Working sitemap URLs: {len(data['sitemap']['working_urls'])}
+- Restricted sitemap URLs (401/403): {len(data['sitemap']['restricted_urls'])}
 - Meta robots: `{data['meta_robots']}`
 
 ### AI Crawler Policy
@@ -642,14 +737,12 @@ def main() -> int:
     robots_url = urljoin(final_url, "/robots.txt")
     robots_resp = fetch_text(robots_url, args.timeout)
     robots_exists = bool(robots_resp["ok"])
-    robots_parsed = parse_robots(robots_resp["text"]) if robots_exists else {"entries": {}, "sitemaps": [], "ai_policy": {}}
-
-    sitemap_url = urljoin(final_url, "/sitemap.xml")
-    sitemap_head = try_head(sitemap_url, args.timeout)
-    sitemap_exists = bool(sitemap_head["ok"])
+    robots_parsed = parse_robots(robots_resp["text"]) if robots_exists else parse_robots("")
+    sitemap_state = evaluate_sitemaps(final_url, robots_parsed["sitemaps"], args.timeout)
 
     canonical_tag = soup.find("link", rel="canonical")
-    canonical = str(canonical_tag.get("href")).strip() if canonical_tag and canonical_tag.get("href") else None
+    canonical_raw = str(canonical_tag.get("href")).strip() if canonical_tag and canonical_tag.get("href") else None
+    canonical = resolve_canonical(final_url, canonical_raw)
 
     hreflang_count = 0
     for link in soup.find_all("link", rel="alternate"):
@@ -691,7 +784,13 @@ def main() -> int:
             "sitemaps": robots_parsed["sitemaps"],
             "ai_policy": robots_parsed["ai_policy"],
         },
-        "sitemap": {"exists": sitemap_exists, "url": sitemap_url},
+        "sitemap": {
+            "exists": sitemap_state["exists"],
+            "checked_urls": sitemap_state["checked_urls"],
+            "working_urls": sitemap_state["working_urls"],
+            "restricted_urls": sitemap_state["restricted_urls"],
+            "source": sitemap_state["source"],
+        },
         "security_headers_present": [h for h in SECURITY_HEADERS if h in fetched["headers"]],
         "url_length": len(final_url),
         "has_uppercase_path": bool(re.search(r"[A-Z]", urlparse(final_url).path)),
