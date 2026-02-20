@@ -72,6 +72,7 @@ class PageResult:
     fetch_error: str | None
     redirect_hops: int
     content_type: str | None
+    is_html: bool
 
 
 def clamp(num: float, low: float, high: float) -> float:
@@ -86,9 +87,9 @@ def normalize_url(raw: str) -> str:
         parsed = urlparse(value)
     if parsed.scheme not in ("http", "https"):
         raise ValueError(f"Unsupported URL scheme: {parsed.scheme}")
-    host = parsed.hostname or ""
+    netloc = parsed.netloc or (parsed.hostname or "")
     clean_path = parsed.path or "/"
-    return urlunparse((parsed.scheme, host, clean_path, "", "", ""))
+    return urlunparse((parsed.scheme, netloc, clean_path, "", parsed.query, ""))
 
 
 def is_public_target(url: str) -> bool:
@@ -105,10 +106,19 @@ def is_public_target(url: str) -> bool:
     return True
 
 
+def normalize_host(host: str) -> str:
+    lowered = host.lower().strip(".")
+    if lowered.startswith("www."):
+        return lowered[4:]
+    return lowered
+
+
 def same_site(url_a: str, url_b: str) -> bool:
-    a = urlparse(url_a).hostname or ""
-    b = urlparse(url_b).hostname or ""
-    return a.lower() == b.lower()
+    a = normalize_host(urlparse(url_a).hostname or "")
+    b = normalize_host(urlparse(url_b).hostname or "")
+    if not a or not b:
+        return False
+    return a == b or a.endswith("." + b) or b.endswith("." + a)
 
 
 def strip_fragment(url: str) -> str:
@@ -264,6 +274,7 @@ def crawl_site(start_url: str, max_pages: int, timeout: int, delay: float) -> tu
                     fetch_error=fetched["error"],
                     redirect_hops=0,
                     content_type=None,
+                    is_html=False,
                 )
             )
             continue
@@ -273,6 +284,11 @@ def crawl_site(start_url: str, max_pages: int, timeout: int, delay: float) -> tu
             seen.add(final_url)
 
         content_type = str(fetched["headers"].get("Content-Type", ""))
+        content_type_lower = content_type.lower()
+        is_html = "text/html" in content_type_lower or "application/xhtml+xml" in content_type_lower
+        if not is_html:
+            # Content-Type can be wrong or absent; fallback to document sniffing.
+            is_html = "<html" in (fetched["text"] or "").lower()
         parsed = {
             "title": None,
             "meta_description": None,
@@ -284,7 +300,7 @@ def crawl_site(start_url: str, max_pages: int, timeout: int, delay: float) -> tu
             "missing_alt_count": 0,
             "internal_links": [],
         }
-        if "text/html" in content_type or "<html" in (fetched["text"] or "").lower():
+        if is_html:
             parsed = parse_html(fetched["text"] or "", final_url)
 
         pages.append(
@@ -304,6 +320,7 @@ def crawl_site(start_url: str, max_pages: int, timeout: int, delay: float) -> tu
                 fetch_error=None,
                 redirect_hops=int(fetched["redirect_hops"]),
                 content_type=content_type,
+                is_html=is_html,
             )
         )
 
@@ -418,21 +435,23 @@ def compute_scores(
     timeout: int,
 ) -> tuple[dict[str, float | None], dict[str, Any], list[dict[str, Any]]]:
     pages_ok = [p for p in pages if p.fetch_error is None]
-    total = len(pages_ok) if pages_ok else 1
+    pages_html = [p for p in pages_ok if p.is_html]
+    html_count = len(pages_html)
+    total = html_count if html_count else 1
     all_count = len(pages)
 
-    missing_title = sum(1 for p in pages_ok if not p.title)
-    missing_meta = sum(1 for p in pages_ok if not p.meta_description)
-    missing_canonical = sum(1 for p in pages_ok if not p.canonical)
-    invalid_h1 = sum(1 for p in pages_ok if p.h1_count != 1)
-    thin_pages = sum(1 for p in pages_ok if p.word_count < 300)
-    schema_pages = sum(1 for p in pages_ok if p.schema_count > 0)
-    total_images = sum(p.image_count for p in pages_ok)
-    missing_alt = sum(p.missing_alt_count for p in pages_ok)
+    missing_title = sum(1 for p in pages_html if not p.title)
+    missing_meta = sum(1 for p in pages_html if not p.meta_description)
+    missing_canonical = sum(1 for p in pages_html if not p.canonical)
+    invalid_h1 = sum(1 for p in pages_html if p.h1_count != 1)
+    thin_pages = sum(1 for p in pages_html if p.word_count < 300)
+    schema_pages = sum(1 for p in pages_html if p.schema_count > 0)
+    total_images = sum(p.image_count for p in pages_html)
+    missing_alt = sum(p.missing_alt_count for p in pages_html)
     error_pages = sum(1 for p in pages if (p.status_code is not None and p.status_code >= 400) or p.fetch_error)
     long_redirects = sum(1 for p in pages_ok if p.redirect_hops > 2)
 
-    title_counts = Counter((p.title or "").strip().lower() for p in pages_ok if p.title)
+    title_counts = Counter((p.title or "").strip().lower() for p in pages_html if p.title)
     duplicate_titles = sum(c - 1 for c in title_counts.values() if c > 1)
 
     response_times = [p.response_ms for p in pages_ok if p.response_ms is not None]
@@ -444,7 +463,7 @@ def compute_scores(
 
     about_or_contact = any(
         any(part in (urlparse(link).path or "").lower() for part in ("/about", "/contact", "/team", "/company"))
-        for page in pages_ok
+        for page in pages_html
         for link in page.internal_links
     )
 
@@ -458,21 +477,27 @@ def compute_scores(
         technical -= 10.0
     technical = clamp(technical, 0.0, 100.0)
 
-    content = 100.0
-    content -= 35.0 * (thin_pages / total)
-    content -= 20.0 * (duplicate_titles / total)
-    content -= 15.0 * (invalid_h1 / total)
-    content = clamp(content, 0.0, 100.0)
+    content: float | None = None
+    onpage: float | None = None
+    schema: float | None = None
+    images: float | None = None
+    ai_readiness: float | None = None
+    if html_count > 0:
+        content = 100.0
+        content -= 35.0 * (thin_pages / total)
+        content -= 20.0 * (duplicate_titles / total)
+        content -= 15.0 * (invalid_h1 / total)
+        content = clamp(content, 0.0, 100.0)
 
-    onpage = 100.0
-    onpage -= 35.0 * (missing_title / total)
-    onpage -= 25.0 * (missing_meta / total)
-    onpage -= 20.0 * (invalid_h1 / total)
-    onpage = clamp(onpage, 0.0, 100.0)
+        onpage = 100.0
+        onpage -= 35.0 * (missing_title / total)
+        onpage -= 25.0 * (missing_meta / total)
+        onpage -= 20.0 * (invalid_h1 / total)
+        onpage = clamp(onpage, 0.0, 100.0)
 
-    schema = 100.0
-    schema -= 50.0 * (1.0 - (schema_pages / total))
-    schema = clamp(schema, 0.0, 100.0)
+        schema = 100.0
+        schema -= 50.0 * (1.0 - (schema_pages / total))
+        schema = clamp(schema, 0.0, 100.0)
 
     if median_response is None:
         performance = None
@@ -487,31 +512,40 @@ def compute_scores(
     else:
         performance = 25.0
 
-    if total_images == 0:
-        images = 100.0
-    else:
-        images = clamp(100.0 - (missing_alt / total_images) * 70.0, 0.0, 100.0)
+    if html_count > 0:
+        if total_images == 0:
+            images = 100.0
+        else:
+            images = clamp(100.0 - (missing_alt / total_images) * 70.0, 0.0, 100.0)
 
-    ai_readiness = 100.0
-    if not llms_ok:
-        ai_readiness -= 20.0
-    if not about_or_contact:
-        ai_readiness -= 20.0
-    ai_readiness -= 20.0 * (1.0 - (schema_pages / total))
-    ai_readiness -= 15.0 * (thin_pages / total)
-    ai_readiness = clamp(ai_readiness, 0.0, 100.0)
+        ai_readiness = 100.0
+        if not llms_ok:
+            ai_readiness -= 20.0
+        if not about_or_contact:
+            ai_readiness -= 20.0
+        ai_readiness -= 20.0 * (1.0 - (schema_pages / total))
+        ai_readiness -= 15.0 * (thin_pages / total)
+        ai_readiness = clamp(ai_readiness, 0.0, 100.0)
 
     scores: dict[str, float | None] = {
         "technical": round(technical, 1),
-        "content": round(content, 1),
-        "onpage": round(onpage, 1),
-        "schema": round(schema, 1),
+        "content": round(content, 1) if content is not None else None,
+        "onpage": round(onpage, 1) if onpage is not None else None,
+        "schema": round(schema, 1) if schema is not None else None,
         "performance": round(performance, 1) if performance is not None else None,
-        "images": round(images, 1),
-        "ai_readiness": round(ai_readiness, 1),
+        "images": round(images, 1) if images is not None else None,
+        "ai_readiness": round(ai_readiness, 1) if ai_readiness is not None else None,
     }
 
     issues: list[dict[str, Any]] = []
+    if html_count == 0:
+        issues.append(
+            {
+                "priority": "High",
+                "title": "No HTML pages crawled",
+                "detail": "Crawl did not find HTML documents in scope. Verify start URL and crawl scope.",
+            }
+        )
     if error_pages > 0:
         issues.append(
             {"priority": "Critical", "title": "HTTP errors during crawl", "detail": f"{error_pages} pages returned errors."}
@@ -532,7 +566,7 @@ def compute_scores(
                 "detail": f"{missing_meta}/{total} crawled HTML pages are missing meta descriptions.",
             }
         )
-    if thin_pages > max(3, int(0.2 * total)):
+    if html_count > 0 and thin_pages > max(3, int(0.2 * total)):
         issues.append(
             {
                 "priority": "High",
@@ -559,7 +593,9 @@ def compute_scores(
 
     stats = {
         "pages_total": all_count,
-        "pages_html": len(pages_ok),
+        "pages_successful": len(pages_ok),
+        "pages_html": html_count,
+        "pages_non_html": len(pages_ok) - html_count,
         "robots_ok": robots_ok,
         "sitemap_ok": sitemap_ok,
         "llms_ok": llms_ok,
@@ -647,7 +683,9 @@ def write_reports(
 - Target: `{target_url}`
 - SEO Health Score: **{total_score}/100**
 - Pages crawled: **{stats['pages_total']}**
+- Successful fetches: **{stats['pages_successful']}**
 - HTML pages analyzed: **{stats['pages_html']}**
+- Non-HTML pages seen: **{stats['pages_non_html']}**
 - Categories not measured: {", ".join(not_measured) if not_measured else "None"}
 
 ## Category Scores
