@@ -63,16 +63,16 @@ EXPERIENCE_MARKERS = [
     "we observed",
 ]
 
-CREDENTIAL_MARKERS = [
-    "phd",
-    "md",
-    "cpa",
-    "certified",
-    "licensed",
-    "board-certified",
-    "professor",
-    "engineer",
-    "specialist",
+CREDENTIAL_PATTERNS = [
+    re.compile(r"\bph\.?d\.?\b"),
+    re.compile(r"\bm\.?d\.?\b"),
+    re.compile(r"\bcpa\b"),
+    re.compile(r"\bcertified\b"),
+    re.compile(r"\blicensed\b"),
+    re.compile(r"\bboard[- ]certified\b"),
+    re.compile(r"\bprofessor\b"),
+    re.compile(r"\bengineer\b"),
+    re.compile(r"\bspecialist\b"),
 ]
 
 TRUST_LINK_MARKERS = ["/about", "/contact", "/privacy", "/terms", "/editorial", "/team"]
@@ -205,17 +205,32 @@ def extract_links(soup: BeautifulSoup, base_url: str) -> dict[str, Any]:
 
 def detect_page_type(url: str, title: str | None, h1: str | None) -> str:
     path = (urlparse(url).path or "/").lower()
-    text = " ".join(filter(None, [title or "", h1 or "", path]))
+    title_text = (title or "").lower()
+    h1_text = (h1 or "").lower()
+    text = " ".join(filter(None, [title_text, h1_text]))
+
+    def has_word_terms(value: str, terms: list[str]) -> bool:
+        return any(re.search(rf"\b{re.escape(term)}\b", value) for term in terms)
+
     if path == "/" or path == "":
         return "homepage"
-    if any(x in text for x in ["/blog", "/article", "/news", "/guides", "/tutorial"]):
-        return "blog_post"
-    if any(x in text for x in ["/product", "/products", "/pricing", "/shop", "add to cart"]):
+
+    if any(x in path for x in ["/product", "/products", "/pricing", "/shop"]):
         return "product_page"
-    if any(x in text for x in ["/service", "/services", "/solutions", "/consulting"]):
+    if any(x in path for x in ["/service", "/services", "/solutions", "/consulting"]):
         return "service_page"
-    if any(x in text for x in ["/location", "/locations", "/near-", " in ", "/city/"]):
+    # Keep location detection strict to avoid misclassifying generic narrative pages.
+    if any(x in path for x in ["/location", "/locations", "/near-", "/city/"]):
         return "location_page"
+    if any(x in path for x in ["/blog", "/article", "/articles", "/news", "/guides", "/guide", "/tutorial", "/insights"]):
+        return "blog_post"
+
+    if has_word_terms(text, ["blog", "article", "news", "guide", "guides", "tutorial", "insights", "case study"]):
+        return "blog_post"
+    if "add to cart" in text or has_word_terms(text, ["product", "pricing", "shop", "sku"]):
+        return "product_page"
+    if has_word_terms(text, ["service", "services", "solutions", "consulting", "agency"]):
+        return "service_page"
     return "generic_page"
 
 
@@ -249,26 +264,31 @@ def extract_schema_types(soup: BeautifulSoup) -> dict[str, Any]:
     return {"count": len(blocks), "types": sorted(set(types)), "invalid_count": invalid}
 
 
-def extract_author_signals(soup: BeautifulSoup, text: str) -> dict[str, Any]:
+def extract_author_signals(soup: BeautifulSoup, _text: str) -> dict[str, Any]:
+    region = soup.find("article") or soup.find("main") or soup.body or soup
     byline = None
     author_meta = soup.find("meta", attrs={"name": "author"})
     if author_meta and author_meta.get("content"):
         byline = str(author_meta.get("content")).strip()
     if not byline:
-        maybe = soup.find(string=re.compile(r"\bby\s+[A-Z][a-z]+"))
+        maybe = region.find(string=re.compile(r"\bby\s+[A-Z][a-z]+"))
         if maybe:
             byline = str(maybe).strip()
 
     class_hits = 0
-    for tag in soup.find_all(True):
+    author_scope_fragments: list[str] = []
+    for tag in region.find_all(True):
         classes = " ".join([str(c).lower() for c in tag.get("class", [])])
         if any(x in classes for x in ["author", "bio", "editor", "reviewed"]):
             class_hits += 1
+            snippet = tag.get_text(" ", strip=True)
+            if snippet:
+                author_scope_fragments.append(snippet[:500])
             if class_hits > 3:
                 break
 
-    low = text.lower()
-    credentials = any(marker in low for marker in CREDENTIAL_MARKERS)
+    scoped_text = " ".join(filter(None, [byline or ""] + author_scope_fragments)).lower()
+    credentials = any(pattern.search(scoped_text) for pattern in CREDENTIAL_PATTERNS)
     return {
         "author_present": bool(byline) or class_hits > 0,
         "byline": byline,
@@ -321,10 +341,9 @@ def extract_freshness_signals(soup: BeautifulSoup, headers: dict[str, Any]) -> d
             try_parse(str(tag.get("datetime")))
 
     if isinstance(headers, dict):
-        for key in ("Last-Modified", "Date"):
-            value = headers.get(key) or headers.get(key.lower())
-            if value:
-                try_parse(str(value))
+        value = headers.get("Last-Modified") or headers.get("last-modified")
+        if value:
+            try_parse(str(value))
 
     latest = max(dates) if dates else None
     age_days = None
@@ -433,11 +452,16 @@ def score_eeat(signals: dict[str, Any]) -> tuple[dict[str, float], float]:
     authority_signals += 1 if signals["internal_links"] >= 3 else 0
     authority = (authority_signals / 4) * 100
 
-    trust_signals = 0
+    trust_signals = 0.0
     trust_signals += 1 if signals["https"] else 0
     trust_signals += 1 if signals["trust_links"] >= 2 else 0
     trust_signals += 1 if signals["author_present"] else 0
-    trust_signals += 1 if signals["freshness_age_days"] is not None else 0
+    freshness_age_days = signals["freshness_age_days"]
+    if freshness_age_days is not None:
+        if freshness_age_days <= 180:
+            trust_signals += 1
+        elif freshness_age_days <= 365:
+            trust_signals += 0.5
     trust = (trust_signals / 4) * 100
 
     total = (experience * 0.20) + (expertise * 0.25) + (authority * 0.25) + (trust * 0.30)
