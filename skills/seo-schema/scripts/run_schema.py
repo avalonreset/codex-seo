@@ -537,6 +537,12 @@ def run_analyze(args: argparse.Namespace) -> int:
         except requests.exceptions.RequestException as exc:
             print(f"Error: failed to fetch URL: {exc}")
             return 1
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            return 2
+        if not is_public_target(final_url):
+            print("Error: redirected target URL resolves to non-public or invalid host")
+            return 2
         source = final_url
         page_url = final_url
         host = canonical_host(urlparse(final_url).hostname)
