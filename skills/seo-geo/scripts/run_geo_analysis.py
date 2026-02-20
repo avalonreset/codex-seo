@@ -219,11 +219,11 @@ def brand_signals(soup: BeautifulSoup, page_url: str, brand: str | None) -> dict
     hit = 0
     for platform, markers in PLATFORMS.items():
         ev = []
-    for link in sorted(hrefs)[:MAX_LINK_SCAN]:
-        p = urlparse(link)
-        h = canonical_host(p.hostname)
-        if p.scheme not in {"http", "https"} or not h or h == page_host:
-            continue
+        for link in sorted(hrefs)[:MAX_LINK_SCAN]:
+            p = urlparse(link)
+            h = canonical_host(p.hostname)
+            if p.scheme not in {"http", "https"} or not h or h == page_host:
+                continue
             if any(h == m or h.endswith(f".{m}") for m in markers):
                 ev.append(link)
         text_sig = any(m.split(".")[0] in text for m in markers)
