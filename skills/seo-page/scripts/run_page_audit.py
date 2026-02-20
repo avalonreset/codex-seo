@@ -437,6 +437,10 @@ def main() -> int:
     if fetched["error"]:
         print(f"Error: {fetched['error']}")
         return 1
+    status_code = int(fetched.get("status_code") or 0)
+    if status_code < 200 or status_code >= 300:
+        print(f"Error: non-success HTTP status from target: {status_code}")
+        return 1
     if not fetched["text"]:
         print("Error: empty response")
         return 1

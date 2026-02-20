@@ -61,9 +61,9 @@ def normalize_url(raw: str) -> str:
         parsed = urlparse(value)
     if parsed.scheme not in ("http", "https"):
         raise ValueError(f"Unsupported URL scheme: {parsed.scheme}")
-    host = parsed.hostname or ""
+    netloc = parsed.netloc or (parsed.hostname or "")
     path = parsed.path or "/"
-    return urlunparse((parsed.scheme, host, path, "", parsed.query, ""))
+    return urlunparse((parsed.scheme, netloc, path, "", parsed.query, ""))
 
 
 def is_public_target(url: str) -> bool:
@@ -71,12 +71,19 @@ def is_public_target(url: str) -> bool:
     if not host:
         return False
     try:
-        ip = ipaddress.ip_address(socket.gethostbyname(host))
-        if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local or ip.is_multicast:
-            return False
-    except (socket.gaierror, ValueError):
+        info = socket.getaddrinfo(host, None)
+    except socket.gaierror:
         return False
-    return True
+    for _, _, _, _, sockaddr in info:
+        ip_text = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(ip_text)
+        except ValueError:
+            continue
+        if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local or ip.is_multicast:
+            continue
+        return True
+    return False
 
 
 def fetch_url(url: str, timeout: int) -> dict[str, Any]:

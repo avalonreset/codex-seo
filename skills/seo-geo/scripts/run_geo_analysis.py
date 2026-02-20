@@ -40,6 +40,7 @@ PLATFORMS = {
     "LinkedIn": ["linkedin.com"],
 }
 MAX_LINK_SCAN = 5000
+JSONLD_TYPE_RE = re.compile(r"application/ld\+json", re.IGNORECASE)
 
 
 
@@ -182,7 +183,7 @@ def crawler_status(name: str, rules: dict[str, list[tuple[str, str]]]) -> tuple[
 
 def sameas_links(soup: BeautifulSoup) -> list[str]:
     out: list[str] = []
-    for script in soup.find_all("script", type="application/ld+json"):
+    for script in soup.find_all("script", attrs={"type": JSONLD_TYPE_RE}):
         raw = (script.string or script.get_text() or "").strip()
         if not raw:
             continue
@@ -511,7 +512,7 @@ def technical_score(soup: BeautifulSoup, robots: dict[str, Any], llms: dict[str,
 
 def schema_types(soup: BeautifulSoup) -> list[str]:
     out: set[str] = set()
-    for script in soup.find_all("script", type="application/ld+json"):
+    for script in soup.find_all("script", attrs={"type": JSONLD_TYPE_RE}):
         raw = (script.string or script.get_text() or "").strip()
         if not raw:
             continue

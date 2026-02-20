@@ -42,6 +42,7 @@ DEPRECATED_TYPES = {
 RESTRICTED_TYPES = {"faqpage"}
 URL_FIELDS = {"url", "logo", "image", "@id", "sameas", "contenturl", "embedurl", "thumbnailurl"}
 DATE_FIELDS = {"datepublished", "datemodified", "datecreated", "uploaddate", "startdate", "enddate"}
+JSONLD_TYPE_RE = re.compile(r"application/ld\+json", re.IGNORECASE)
 
 REQUIRED_FIELDS: dict[str, list[str]] = {
     "organization": ["name", "url"],
@@ -204,7 +205,7 @@ def is_authority_domain(host: str) -> bool:
 def extract_jsonld_blocks(soup: BeautifulSoup) -> tuple[list[dict[str, Any]], list[str]]:
     blocks: list[dict[str, Any]] = []
     parse_errors: list[str] = []
-    scripts = soup.find_all("script", type="application/ld+json")
+    scripts = soup.find_all("script", attrs={"type": JSONLD_TYPE_RE})
     for idx, script in enumerate(scripts, start=1):
         raw = (script.string or script.get_text() or "").strip()
         if not raw:
@@ -585,7 +586,7 @@ def run_analyze(args: argparse.Namespace) -> int:
     suggestions = build_suggestions(unique_types, signals, page_url, title)
 
     detections = {
-        "jsonld_script_count": len(soup.find_all("script", type="application/ld+json")),
+        "jsonld_script_count": len(soup.find_all("script", attrs={"type": JSONLD_TYPE_RE})),
         "parsed_jsonld_blocks": len(blocks),
         "typed_nodes": len(validations),
         "unique_types": sorted(unique_types),

@@ -218,8 +218,16 @@ def image_source_url(img: Tag, base_url: str) -> str | None:
         if not value:
             continue
         if value.startswith("data:"):
-            return None
+            continue
         return urljoin(base_url, value)
+
+    srcset = str(img.get("srcset") or "").strip()
+    if srcset:
+        for part in srcset.split(","):
+            candidate = part.strip().split(" ", 1)[0]
+            if not candidate or candidate.startswith("data:"):
+                continue
+            return urljoin(base_url, candidate)
     return None
 
 

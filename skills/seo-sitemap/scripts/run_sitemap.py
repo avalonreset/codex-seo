@@ -67,6 +67,8 @@ def normalize_url(raw: str) -> str:
     if parsed.scheme not in ("http", "https"):
         raise ValueError(f"Unsupported URL scheme: {parsed.scheme}")
     netloc = parsed.netloc or (parsed.hostname or "")
+    if not netloc:
+        raise ValueError("URL is missing host")
     path = parsed.path or "/"
     return urlunparse((parsed.scheme, netloc, path, "", parsed.query, ""))
 
