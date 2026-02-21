@@ -441,9 +441,10 @@ def render_report(
 - Image score: **{score}/100**
 - Total images: {metrics['total_images']}
 
-## Metrics
+## Image Audit Summary
 | Metric | Status | Count |
 |---|---|---:|
+| Total images | - | {metrics['total_images']} |
 | Missing alt text | {'❌' if metrics['missing_alt'] else '✅'} | {metrics['missing_alt']} |
 | Alt quality warnings | {'⚠️' if metrics['alt_quality_warnings'] else '✅'} | {metrics['alt_quality_warnings']} |
 | Oversized warning | {'⚠️' if metrics['oversized_warning'] else '✅'} | {metrics['oversized_warning']} |
@@ -469,6 +470,9 @@ def render_report(
 | Image | Current Size | Format | Issues | Est. Savings |
 |---|---:|---|---|---:|
 {top_table}
+
+## Recommendations
+{chr(10).join(f"{idx}. {item}" for idx, item in enumerate(recommendations, start=1))}
 """
     out_report.write_text(report, encoding="utf-8")
 

@@ -52,6 +52,7 @@ When the user invokes `/seo audit`, delegate to subagents in parallel:
 4. Create prioritized action plan (Critical → High → Medium → Low)
 
 Codex mapping: implement this subagent delegation with `spawn_agent` + `wait` in parallel.
+Chat-mode rule: in Codex chat, this multi-agent delegation path is the default for `/seo audit`. Do not fallback to deterministic runners unless the user explicitly requests CLI/reproducible runner mode.
 
 For individual commands, load the relevant sub-skill directly.
 

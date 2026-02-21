@@ -238,6 +238,127 @@ def extract_jsonld_blocks(soup: BeautifulSoup) -> tuple[list[dict[str, Any]], li
     return blocks, parse_errors
 
 
+def normalize_schema_token(value: str) -> str:
+    token = str(value or "").strip()
+    if ":" in token:
+        token = token.rsplit(":", 1)[-1]
+    return token
+
+
+def normalize_property_name(value: str) -> str:
+    token = str(value or "").strip()
+    if not token:
+        return token
+    if ":" in token:
+        token = token.rsplit(":", 1)[-1]
+    return token
+
+
+def append_property(node: dict[str, Any], key: str, value: Any) -> None:
+    if value in (None, "", [], {}):
+        return
+    if key not in node:
+        node[key] = value
+        return
+    existing = node[key]
+    if isinstance(existing, list):
+        if value not in existing:
+            existing.append(value)
+        return
+    if existing != value:
+        node[key] = [existing, value]
+
+
+def node_property_value(tag: Any) -> str | None:
+    if not hasattr(tag, "get"):
+        return None
+    for attr in ("content", "href", "src", "datetime"):
+        raw = tag.get(attr)
+        if raw is None:
+            continue
+        value = str(raw).strip()
+        if value:
+            return value
+    text = tag.get_text(" ", strip=True) if hasattr(tag, "get_text") else ""
+    return text or None
+
+
+def extract_microdata_nodes(soup: BeautifulSoup) -> list[dict[str, Any]]:
+    nodes: list[dict[str, Any]] = []
+    scopes = soup.select("[itemscope]")
+    for idx, scope in enumerate(scopes, start=1):
+        node: dict[str, Any] = {}
+        itemtype_raw = str(scope.get("itemtype") or "").strip()
+        if itemtype_raw:
+            first_type = itemtype_raw.split()[0]
+            node["@type"] = normalize_schema_token(first_type)
+            if "schema.org" in first_type.lower():
+                node["@context"] = "https://schema.org"
+
+        prop_count = 0
+        for prop in scope.select("[itemprop]"):
+            owner = prop.find_parent(attrs={"itemscope": True})
+            if owner is not None and owner is not scope:
+                continue
+            key = normalize_property_name(str(prop.get("itemprop") or "").strip())
+            if not key:
+                continue
+            prop_count += 1
+            append_property(node, key, node_property_value(prop))
+
+        if "@type" not in node and prop_count == 0:
+            continue
+        nodes.append({"index": idx, "payload": node})
+    return nodes
+
+
+def extract_rdfa_nodes(soup: BeautifulSoup) -> list[dict[str, Any]]:
+    nodes: list[dict[str, Any]] = []
+    scopes = soup.select("[typeof]")
+    for idx, scope in enumerate(scopes, start=1):
+        node: dict[str, Any] = {}
+        raw_type = str(scope.get("typeof") or "").strip()
+        if raw_type:
+            parts = [normalize_schema_token(part) for part in re.split(r"\s+", raw_type) if part.strip()]
+            parts = [part for part in parts if part]
+            if parts:
+                node["@type"] = parts if len(parts) > 1 else parts[0]
+
+        vocab = str(scope.get("vocab") or "").strip().lower()
+        if "schema.org" in vocab:
+            node["@context"] = "https://schema.org"
+
+        prop_count = 0
+        for prop in scope.select("[property]"):
+            owner = prop.find_parent(attrs={"typeof": True})
+            if owner is not None and owner is not scope:
+                continue
+            key = normalize_property_name(str(prop.get("property") or "").strip())
+            if not key:
+                continue
+            prop_count += 1
+            append_property(node, key, node_property_value(prop))
+
+        if "@type" not in node and prop_count == 0:
+            continue
+        nodes.append({"index": idx, "payload": node})
+
+    orphan_props = []
+    for prop in soup.select("[property]"):
+        if prop.find_parent(attrs={"typeof": True}) is None:
+            orphan_props.append(prop)
+    if orphan_props:
+        node: dict[str, Any] = {}
+        for prop in orphan_props[:200]:
+            key = normalize_property_name(str(prop.get("property") or "").strip())
+            if not key:
+                continue
+            append_property(node, key, node_property_value(prop))
+        if node:
+            nodes.append({"index": 9000, "payload": node})
+    return nodes
+
+
 def validate_node(
     node: dict[str, Any],
     context: Any,
@@ -507,6 +628,8 @@ def render_report(
 ## Detection Summary
 - JSON-LD scripts: {detections['jsonld_script_count']}
 - Parsed JSON-LD blocks: {detections['parsed_jsonld_blocks']}
+- Parsed Microdata items: {detections['parsed_microdata_items']}
+- Parsed RDFa items: {detections['parsed_rdfa_items']}
 - Schema nodes with `@type`: {detections['typed_nodes']}
 - Unique schema types: {", ".join(sorted(detections['unique_types'])) if detections['unique_types'] else "None"}
 - Microdata markers: {detections['microdata_markers']}
@@ -586,12 +709,34 @@ def run_analyze(args: argparse.Namespace) -> int:
     title = soup.title.get_text(" ", strip=True) if soup.title else None
 
     blocks, parse_errors = extract_jsonld_blocks(soup)
+    microdata_nodes = extract_microdata_nodes(soup)
+    rdfa_nodes = extract_rdfa_nodes(soup)
     validations: list[NodeValidation] = []
     unique_types: set[str] = set()
 
     for block in blocks:
         payload = block["payload"]
         block_index = block["index"]
+        node_counter = 0
+        for node, context in iter_schema_nodes(payload, None):
+            node_counter += 1
+            results = validate_node(node=node, context=context, host=host, block_index=block_index, node_index=node_counter)
+            validations.extend(results)
+            unique_types.update(item.schema_type for item in results if item.schema_type != "unknown")
+
+    for block in microdata_nodes:
+        payload = block["payload"]
+        block_index = 10_000 + int(block["index"])
+        node_counter = 0
+        for node, context in iter_schema_nodes(payload, None):
+            node_counter += 1
+            results = validate_node(node=node, context=context, host=host, block_index=block_index, node_index=node_counter)
+            validations.extend(results)
+            unique_types.update(item.schema_type for item in results if item.schema_type != "unknown")
+
+    for block in rdfa_nodes:
+        payload = block["payload"]
+        block_index = 20_000 + int(block["index"])
         node_counter = 0
         for node, context in iter_schema_nodes(payload, None):
             node_counter += 1
@@ -607,6 +752,8 @@ def run_analyze(args: argparse.Namespace) -> int:
     detections = {
         "jsonld_script_count": len(soup.find_all("script", attrs={"type": JSONLD_TYPE_RE})),
         "parsed_jsonld_blocks": len(blocks),
+        "parsed_microdata_items": len(microdata_nodes),
+        "parsed_rdfa_items": len(rdfa_nodes),
         "typed_nodes": len(validations),
         "unique_types": sorted(unique_types),
         "microdata_markers": microdata_markers,

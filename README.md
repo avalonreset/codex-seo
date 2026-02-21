@@ -20,7 +20,7 @@ Porting principles:
 
 ## What Is Included
 
-12 SEO skills, same coverage as Claude SEO:
+Primary SEO skill coverage (matches Claude SEO scope):
 - `seo-audit`
 - `seo-page`
 - `seo-technical`
@@ -34,6 +34,9 @@ Porting principles:
 - `seo-competitor-pages`
 - `seo-hreflang`
 
+Meta orchestrator skill:
+- `seo` (top-level routing/orchestration skill)
+
 Audit specialist agents:
 - `seo-technical`
 - `seo-content`
@@ -46,8 +49,21 @@ Audit specialist agents:
 
 The only intentional behavioral adaptation for audits is execution mapping:
 - Claude subagent delegation maps to Codex multi-agent delegation (`spawn_agent` + `wait`)
+- In Codex chat, `/seo audit` should default to this multi-agent path. Deterministic runners are for explicit CLI/reproducibility use cases.
 
 Everything else should remain aligned with upstream Claude SEO skill intent and output structure.
+
+## Codex Multi-Agent Requirement (Important)
+
+For authentic `/seo audit` behavior in Codex chat, enable Codex experimental multi-agent mode:
+
+1. Run `/experimental` in Codex.
+2. Turn **Multi-agent** ON.
+3. Start a new audit request.
+
+Without this toggle enabled, Codex chat may fall back to non-parallel behavior and produce less complete delegation patterns.
+
+Deterministic CLI runners still work without this toggle (for example `skills/seo-audit/scripts/run_audit.py`), because they execute local specialist tracks directly.
 
 ## Installation
 
@@ -96,7 +112,7 @@ Use normal Codex prompts, for example:
 
 Expected audit behavior:
 1. fetches core pages
-2. delegates to specialist agents in parallel
+2. delegates to specialist agents in parallel (when Codex multi-agent is enabled)
 3. merges findings into `FULL-AUDIT-REPORT.md` and `ACTION-PLAN.md`
 
 ## Optional CLI Runners
@@ -113,7 +129,7 @@ python skills/seo-audit/scripts/run_audit.py https://example.com --output-dir ou
 
 ```text
 seo/                            # Orchestrator skill + references
-skills/seo-*/                   # 12 specialized skills
+skills/seo-*/                   # primary skills + specialist audit runners
 agents/seo-*.md                 # Specialist agent profiles
 skills/*/scripts/run_*.py       # Optional CLI runners
 schema/templates.json           # Schema templates

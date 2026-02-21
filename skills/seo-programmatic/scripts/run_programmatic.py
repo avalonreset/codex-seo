@@ -804,6 +804,12 @@ def render_analyze_report(
         "- Require explicit pre-publish review checkpoints on representative page samples.",
         "- Re-run this audit after each major template change or dataset refresh.",
     ]
+    index_bloat_lines = [
+        f"- Noindex or block indexing for **{pages['indexable_low_quality']}** low-quality indexable pages until remediation.",
+        "- Keep faceted/parameterized variants canonicalized to the primary page version.",
+        "- Exclude low-value or noindexed URLs from XML sitemaps.",
+        "- Review indexed-page growth monthly against intended publish volume and quality pass rates.",
+    ]
 
     return (
         "# Programmatic SEO Report\n\n"
@@ -830,6 +836,8 @@ def render_analyze_report(
         f"- Review warning triggered (100+ pages with low sample): **{gate_status['review_warning_triggered']}**\n"
         f"- Hard stop triggered (500+ pages without approval): **{gate_status['hard_stop_scale_triggered']}**\n"
         f"- Hard stop triggered (very low uniqueness concentration): **{gate_status['hard_stop_uniqueness_triggered']}**\n\n"
+        "## Index Bloat Prevention\n\n"
+        f"{chr(10).join(index_bloat_lines)}\n\n"
         "## Findings\n\n"
         f"{chr(10).join(issue_sections)}\n"
         "## Recommendations\n\n"

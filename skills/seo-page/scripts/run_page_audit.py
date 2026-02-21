@@ -460,6 +460,111 @@ def bar(score: float) -> str:
     return ("█" * blocks) + ("░" * (10 - blocks))
 
 
+PRIORITY_RANK = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+RECOMMENDATION_MAP = {
+    "Missing title tag": (
+        "Add a unique keyword-aligned title tag in the 50-60 character range.",
+        "Improves SERP relevance and click-through rate potential.",
+    ),
+    "Missing meta description": (
+        "Write a compelling 140-160 character meta description aligned to page intent.",
+        "Improves click-through rate from search results.",
+    ),
+    "H1 structure issue": (
+        "Use exactly one descriptive H1 that aligns with primary intent and title.",
+        "Strengthens topical clarity for crawlers and users.",
+    ),
+    "Heading hierarchy skips": (
+        "Fix heading order so sections follow a logical H2-H3-H4 structure.",
+        "Improves scannability and content structure signals.",
+    ),
+    "Thin content risk": (
+        "Expand the page with unique, intent-specific content and first-party detail.",
+        "Improves topical depth and reduces thin-content risk.",
+    ),
+    "Low readability": (
+        "Shorten dense paragraphs and simplify wording where possible.",
+        "Improves user engagement and comprehension signals.",
+    ),
+    "Keyword underused": (
+        "Use the focus phrase naturally in key sections where it is currently underrepresented.",
+        "Improves intent matching for target queries.",
+    ),
+    "Possible keyword stuffing": (
+        "Reduce repetitive keyword usage and add semantic variations.",
+        "Lowers over-optimization risk while preserving relevance.",
+    ),
+    "Weak E-E-A-T signals": (
+        "Add author credentials, first-hand experience, and credible citation links.",
+        "Strengthens trust and authority signals.",
+    ),
+    "Missing canonical": (
+        "Add a self-referencing canonical URL.",
+        "Prevents duplicate URL variants from splitting ranking signals.",
+    ),
+    "Page marked noindex": (
+        "Remove noindex from pages intended to rank.",
+        "Allows indexing and visibility in search.",
+    ),
+    "Open Graph incomplete": (
+        "Complete Open Graph tags for title, description, image, and URL.",
+        "Improves social preview quality and sharing consistency.",
+    ),
+    "Twitter Card incomplete": (
+        "Add full Twitter card metadata for title, description, and card type.",
+        "Improves social presentation quality.",
+    ),
+    "No schema detected": (
+        "Add schema markup matching page type using valid JSON-LD.",
+        "Improves rich-result eligibility and entity clarity.",
+    ),
+    "Invalid schema detected": (
+        "Fix JSON-LD syntax and required schema properties.",
+        "Restores structured-data eligibility.",
+    ),
+    "Deprecated HowTo schema": (
+        "Remove deprecated HowTo schema and replace with supported types.",
+        "Reduces rich-result policy risk.",
+    ),
+    "Images missing alt": (
+        "Add descriptive alt text to images missing accessibility labels.",
+        "Improves accessibility and image-search relevance.",
+    ),
+    "Oversized images >500KB": (
+        "Compress oversized images and serve modern formats such as WebP/AVIF.",
+        "Improves page speed and LCP outcomes.",
+    ),
+    "Potential CLS risk": (
+        "Define width/height or aspect-ratio for images missing dimensions.",
+        "Reduces layout shift risk and protects UX metrics.",
+    ),
+}
+
+
+def build_recommendations(issues: list[dict[str, str]]) -> list[str]:
+    ordered = sorted(issues, key=lambda issue: PRIORITY_RANK.get(issue["priority"], 99))
+    lines: list[str] = []
+    seen_actions: set[str] = set()
+    for issue in ordered:
+        action, impact = RECOMMENDATION_MAP.get(
+            issue["title"],
+            (issue["detail"].rstrip(".") + ".", "Improves overall SEO quality for this page."),
+        )
+        action_key = action.lower()
+        if action_key in seen_actions:
+            continue
+        seen_actions.add(action_key)
+        lines.append(f"- [{issue['priority']}] {action} Expected impact: {impact}")
+        if len(lines) >= 10:
+            break
+    if not lines:
+        lines.append(
+            "- No urgent fixes detected; monitor this page after major content or template updates. "
+            "Expected impact: Preserves current performance and prevents regressions."
+        )
+    return lines
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Run deep single-page SEO analysis.")
     p.add_argument("url")
@@ -584,6 +689,7 @@ def main() -> int:
     ordered = {"Critical": [], "High": [], "Medium": [], "Low": []}
     for issue in issues:
         ordered[issue["priority"]].append(issue)
+    recommendations = build_recommendations(issues)
 
     report = out / "PAGE-AUDIT-REPORT.md"
     summary = out / "SUMMARY.json"
@@ -628,6 +734,9 @@ Images:          {scores['images']}/100  {bar(scores['images'])}
 ### Low
 {chr(10).join([f"- **{i['title']}**: {i['detail']}" for i in ordered['Low']]) or "- None"}
 
+## Recommendations
+{chr(10).join(recommendations)}
+
 ## Schema Suggestions
 {chr(10).join([f"### {s['type']}{chr(10)}- Why: {s['reason']}{chr(10)}```json{chr(10)}{json.dumps(s['jsonld'], indent=2)}{chr(10)}```" for s in suggestions]) or "No additional schema suggestions generated."}
 
@@ -646,6 +755,7 @@ Images:          {scores['images']}/100  {bar(scores['images'])}
                 "overall": overall,
                 "keyword_source": data["keyword_source"],
                 "issues": issues,
+                "recommendations": recommendations,
                 "schema_suggestions": suggestions,
                 "visual": visual,
             },

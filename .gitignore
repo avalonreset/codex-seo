@@ -1,9 +1,12 @@
 # Generated output
 output/
+seo-*-output*/
+seo-*-output-*/
 .planning/
 *.tmp
 *.bak
 *.swp
+tmp-programmatic-qc.csv
 
 # OS files
 .DS_Store

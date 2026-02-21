@@ -392,6 +392,8 @@ def mobile_checks(url: str, mode: str) -> dict[str, Any]:
         "reason": "",
         "horizontal_scroll": None,
         "base_font_size": None,
+        "touch_targets_total": 0,
+        "touch_targets_small": 0,
     }
     if mode == "off":
         out["reason"] = "mobile check disabled"
@@ -420,11 +422,30 @@ def mobile_checks(url: str, mode: str) -> dict[str, Any]:
                     }"""
                 )
             )
+            touch_stats = page.evaluate(
+                """
+                () => {
+                    const selectors = 'a, button, input, textarea, select, [role="button"]';
+                    const nodes = Array.from(document.querySelectorAll(selectors));
+                    let total = 0;
+                    let small = 0;
+                    for (const node of nodes) {
+                        const r = node.getBoundingClientRect();
+                        if (r.width <= 0 || r.height <= 0) continue;
+                        total += 1;
+                        if (r.width < 48 || r.height < 48) small += 1;
+                    }
+                    return { total, small };
+                }
+                """
+            )
             context.close()
             browser.close()
         out["status"] = "ok"
         out["horizontal_scroll"] = scroll_width > viewport_width
         out["base_font_size"] = round(font_size, 2)
+        out["touch_targets_total"] = int((touch_stats or {}).get("total") or 0)
+        out["touch_targets_small"] = int((touch_stats or {}).get("small") or 0)
         return out
     except Exception as exc:
         out["status"] = "failed"
@@ -574,6 +595,17 @@ def compute_scores(data: dict[str, Any]) -> tuple[dict[str, float], float, list[
                 "Small mobile base font size",
                 f"Detected {data['mobile_probe']['base_font_size']}px base font size.",
             )
+        touch_total = int(data["mobile_probe"].get("touch_targets_total") or 0)
+        touch_small = int(data["mobile_probe"].get("touch_targets_small") or 0)
+        if touch_total > 0 and touch_small > 0:
+            touch_ratio = touch_small / max(touch_total, 1)
+            mobile -= min(18, touch_ratio * 24)
+            add_issue(
+                issues,
+                "Medium" if touch_ratio < 0.35 else "High",
+                "Small mobile touch targets",
+                f"{touch_small}/{touch_total} tap targets are below 48x48px guidance.",
+            )
     elif data["mobile_probe"]["status"] in ("failed", "not_available"):
         mobile -= 5
     mobile = clamp(mobile, 0, 100)
@@ -710,6 +742,7 @@ def write_outputs(output_dir: Path, data: dict[str, Any], scores: dict[str, floa
 - Mobile probe status: {data['mobile_probe']['status']}
 - Mobile horizontal scroll: {data['mobile_probe']['horizontal_scroll']}
 - Mobile base font size: {data['mobile_probe']['base_font_size']}
+- Mobile touch targets <48px: {data['mobile_probe']['touch_targets_small']}/{data['mobile_probe']['touch_targets_total']}
 - Script count: {data['script_count']}
 - Blocking scripts: {data['blocking_scripts']}
 - Main content word count: {data['main_word_count']}

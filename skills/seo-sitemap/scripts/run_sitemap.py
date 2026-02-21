@@ -314,6 +314,8 @@ def analyze_sitemaps(
     unique_urls = sorted(set(normalized_urls))
 
     non_https = [u for u in unique_urls if urlparse(u).scheme != "https"]
+    location_like_urls = [u for u in unique_urls if location_like(u)]
+    location_count = len(location_like_urls)
     non_public_urls: list[str] = []
     public_urls: list[str] = []
     for candidate_url in unique_urls:
@@ -412,6 +414,9 @@ def analyze_sitemaps(
                 "detail": f"Detected {deprecated_count} instances of <priority>/<changefreq> (ignored by Google).",
             }
         )
+    location_issue = location_quality_gate_issue(location_count)
+    if location_issue:
+        issues.append(location_issue)
 
     robots_sitemap_ref = None
     robots_checked = False
@@ -478,6 +483,7 @@ def analyze_sitemaps(
         "redirected_count": len(redirected),
         "noindex_count": len(noindex_urls),
         "http_url_count": len(non_https),
+        "location_like_url_count": location_count,
         "deprecated_tag_count": deprecated_count,
         "identical_lastmod_file_count": len(identical_lastmod_files),
         "robots_checked": robots_checked,
@@ -494,6 +500,7 @@ def analyze_sitemaps(
         "redirected": redirected[:200],
         "noindex_urls": noindex_urls[:200],
         "http_urls": non_https[:200],
+        "location_like_urls": location_like_urls[:200],
         "missing_from_sitemap": missing_from_sitemap[:200],
         "extra_vs_crawl": extra_vs_crawl[:200],
         "identical_lastmod_files": identical_lastmod_files[:100],
@@ -505,6 +512,28 @@ def location_like(url: str) -> bool:
     path = (urlparse(url).path or "").lower()
     markers = ["/location", "/locations", "/city/", "/near-", "/areas/", "/service-area", "/in-"]
     return any(marker in path for marker in markers)
+
+
+def location_quality_gate_issue(location_count: int) -> dict[str, str] | None:
+    if location_count >= 50:
+        return {
+            "priority": "Critical",
+            "title": "Location-page scale exceeds hard-stop threshold",
+            "detail": (
+                f"{location_count} location-like URLs detected (hard stop threshold is 50+). "
+                "Require explicit business justification and >=60% unique content per location page."
+            ),
+        }
+    if location_count >= 30:
+        return {
+            "priority": "High",
+            "title": "Location-page scale warning threshold reached",
+            "detail": (
+                f"{location_count} location-like URLs detected (warning threshold is 30+). "
+                "Ensure >=60% unique content per location page to avoid doorway-page risk."
+            ),
+        }
+    return None
 
 
 def load_url_list(path: str) -> list[str]:
@@ -574,6 +603,7 @@ def render_validation_report(result: dict[str, Any], output_path: Path) -> None:
 - Redirected URLs: {summary['redirected_count']}
 - Noindex URLs (sample): {summary['noindex_count']}
 - HTTP URLs: {summary['http_url_count']}
+- Location-like URLs: {summary.get('location_like_url_count', 0)}
 - Deprecated tags (`priority`/`changefreq`): {summary['deprecated_tag_count']}
 - Identical lastmod files: {summary['identical_lastmod_file_count']}
 - robots.txt checked: {summary['robots_checked']}
@@ -596,6 +626,7 @@ def render_validation_report(result: dict[str, Any], output_path: Path) -> None:
 - Redirect sample: {len(evidence['redirected'])}
 - Noindex sample: {len(evidence['noindex_urls'])}
 - HTTP URLs sample: {len(evidence['http_urls'])}
+- Location-like URL sample: {len(evidence.get('location_like_urls', []))}
 - Missing-from-sitemap sample: {len(evidence['missing_from_sitemap'])}
 """
     output_path.write_text(report, encoding="utf-8")
@@ -669,6 +700,8 @@ def run_analyze(args: argparse.Namespace) -> int:
             except ValueError:
                 malformed_loc_count += 1
         all_urls = sorted(all_urls_set)
+        location_like_urls = [u for u in all_urls if location_like(u)]
+        location_count = len(location_like_urls)
         try:
             crawl_urls = read_crawl_urls(args.crawl_urls_file)
         except ValueError as exc:
@@ -707,6 +740,9 @@ def run_analyze(args: argparse.Namespace) -> int:
                     "detail": f"{malformed_loc_count} <loc> entries could not be normalized and were skipped.",
                 }
             )
+        location_issue = location_quality_gate_issue(location_count)
+        if location_issue:
+            issues.append(location_issue)
         missing = sorted(crawl_urls - set(all_urls))
         if missing:
             issues.append(
@@ -728,6 +764,7 @@ def run_analyze(args: argparse.Namespace) -> int:
                 "redirected_count": 0,
                 "noindex_count": 0,
                 "http_url_count": len([u for u in all_urls if urlparse(u).scheme != "https"]),
+                "location_like_url_count": location_count,
                 "deprecated_tag_count": first.deprecated_tag_count,
                 "identical_lastmod_file_count": 1 if first.identical_lastmod else 0,
                 "robots_checked": False,
@@ -743,6 +780,7 @@ def run_analyze(args: argparse.Namespace) -> int:
                 "redirected": [],
                 "noindex_urls": [],
                 "http_urls": [u for u in all_urls if urlparse(u).scheme != "https"][:200],
+                "location_like_urls": location_like_urls[:200],
                 "missing_from_sitemap": missing[:200],
                 "extra_vs_crawl": sorted(set(all_urls) - crawl_urls)[:200] if crawl_urls else [],
                 "identical_lastmod_files": [args.sitemap_file] if first.identical_lastmod else [],

@@ -22,6 +22,8 @@ description: >
    - `seo-performance` — LCP, INP, CLS measurements
    - `seo-visual` — screenshots, mobile testing, above-fold analysis
    - Codex mapping: use parallel `spawn_agent` runs for these specialists
+   - Codex prerequisite: in Codex chat, run `/experimental` and enable **Multi-agent**
+   - Chat-mode rule: when running inside Codex chat, prefer this `spawn_agent` orchestration path. Use `scripts/run_audit.py` only when the user explicitly asks for deterministic CLI execution.
 5. **Score** — aggregate into SEO Health Score (0-100)
 6. **Report** — generate prioritized action plan
 

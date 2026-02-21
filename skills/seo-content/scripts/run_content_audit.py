@@ -39,6 +39,22 @@ WORD_FLOORS = {
     "location_page": 550,
     "generic_page": 400,
 }
+COMPLEX_PRODUCT_MIN_WORD_FLOOR = 400
+COMPLEX_PRODUCT_TERMS = [
+    "api",
+    "integration",
+    "sdk",
+    "compliance",
+    "enterprise",
+    "workflow",
+    "automation",
+    "architecture",
+    "specification",
+    "security",
+    "deployment",
+    "dashboard",
+    "analytics",
+]
 
 PRIORITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
 
@@ -264,6 +280,40 @@ def detect_page_type(url: str, title: str | None, h1: str | None) -> str:
     if has_word_terms(text, ["service", "services", "solutions", "consulting", "agency"]):
         return "service_page"
     return "generic_page"
+
+
+def detect_complex_product_page(soup: BeautifulSoup, text: str, title: str | None, h1: str | None) -> tuple[bool, dict[str, int]]:
+    low_text = text.lower()
+    title_text = f"{(title or '').lower()} {(h1 or '').lower()}"
+    term_hits = sum(1 for term in COMPLEX_PRODUCT_TERMS if re.search(rf"\b{re.escape(term)}\b", low_text))
+    heading_hits = 0
+    for heading in soup.find_all(re.compile("^h[1-4]$")):
+        h_text = heading.get_text(" ", strip=True).lower()
+        if any(term in h_text for term in ("integrat", "api", "spec", "security", "pricing", "compare", "features")):
+            heading_hits += 1
+    table_count = len(soup.find_all("table"))
+    bullet_count = sum(len(ul.find_all("li")) for ul in soup.find_all(["ul", "ol"]))
+    has_comparison_cue = ("compare" in low_text) or ("vs" in title_text)
+
+    score = 0
+    score += min(term_hits, 6)
+    score += min(heading_hits, 4)
+    if table_count > 0:
+        score += 2
+    if bullet_count >= 12:
+        score += 1
+    if has_comparison_cue:
+        score += 2
+
+    is_complex = score >= 6
+    signals = {
+        "term_hits": term_hits,
+        "heading_hits": heading_hits,
+        "table_count": table_count,
+        "bullet_count": bullet_count,
+        "complexity_score": score,
+    }
+    return is_complex, signals
 
 
 def extract_schema_types(soup: BeautifulSoup) -> dict[str, Any]:
@@ -769,6 +819,7 @@ def write_outputs(output_dir: Path, data: dict[str, Any], issues: list[dict[str,
 ## Content Metrics
 
 - Word count: {data['word_count']} (guideline floor: {data['word_floor']})
+- Complex product classification: {data.get('is_complex_product', False)} (score: {(data.get('complex_product_signals') or {}).get('complexity_score', 0)})
 - Readability (Flesch): {data['readability']['flesch']}
 - Grade level estimate: {data['readability']['grade']}
 - Avg sentence length: {data['readability']['avg_sentence_words']} words
@@ -829,6 +880,8 @@ def write_outputs(output_dir: Path, data: dict[str, Any], issues: list[dict[str,
             "page_type": data["page_type"],
             "word_count": data["word_count"],
             "word_floor": data["word_floor"],
+            "is_complex_product": data.get("is_complex_product", False),
+            "complex_product_signals": data.get("complex_product_signals", {}),
             "readability": data["readability"],
             "freshness": data["freshness"],
             "author": data["author"],
@@ -880,6 +933,12 @@ def main() -> int:
 
     page_type = detect_page_type(final_url, title, h1_text)
     word_floor = WORD_FLOORS.get(page_type, WORD_FLOORS["generic_page"])
+    is_complex_product = False
+    complex_product_signals = {"term_hits": 0, "heading_hits": 0, "table_count": 0, "bullet_count": 0, "complexity_score": 0}
+    if page_type == "product_page":
+        is_complex_product, complex_product_signals = detect_complex_product_page(soup, main_text, title, h1_text)
+        if is_complex_product:
+            word_floor = max(word_floor, COMPLEX_PRODUCT_MIN_WORD_FLOOR)
     readability = readability_metrics(main_text)
 
     links = extract_links(soup, final_url)
@@ -944,6 +1003,8 @@ def main() -> int:
         "page_type": page_type,
         "word_count": word_count,
         "word_floor": word_floor,
+        "is_complex_product": is_complex_product,
+        "complex_product_signals": complex_product_signals,
         "readability": readability,
         "keyword": keyword,
         "keyword_density_pct": keyword_density_pct,

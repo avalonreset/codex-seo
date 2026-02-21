@@ -72,6 +72,16 @@ SCORE_LABELS = {
     "ai_readiness": "AI Search Readiness",
 }
 
+REPORT_PROFILE_ALIASES = {
+    "authentic": "authentic",
+    "standard": "authentic",
+    "default": "authentic",
+    "dossier": "dossier",
+    "codex-dossier": "dossier",
+    # Backward-compatible aliases
+    "claude-authentic": "authentic",
+}
+
 PRIORITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
 
 SECURITY_HEADERS = [
@@ -1010,6 +1020,11 @@ def _extract_summary_metrics(summary: dict[str, Any] | None) -> dict[str, Any]:
     for key in (
         "health_score",
         "overall_score",
+        "technical_score",
+        "content_quality_score",
+        "performance_score",
+        "citation_readiness",
+        "eeat_total",
         "score",
         "health",
         "grade",
@@ -1018,6 +1033,11 @@ def _extract_summary_metrics(summary: dict[str, Any] | None) -> dict[str, Any]:
         "total_issues",
         "priority_counts",
         "visual_status",
+        "layout_shift_count",
+        "layout_shift_value",
+        "desktop_overlap_issues",
+        "desktop_overflow_issues",
+        "responsive_breakpoint_failures",
     ):
         if key in summary:
             metrics[key] = _coerce_metric_value(summary[key])
@@ -1035,12 +1055,26 @@ def _build_orchestration_tracks(
     output_dir: Path,
     timeout: int,
     visual_mode: str,
+    pagespeed_key: str = "",
 ) -> list[dict[str, Any]]:
     skills_root = Path(__file__).resolve().parents[2]
     tracks_root = output_dir / "tracks"
     tracks_root.mkdir(parents=True, exist_ok=True)
 
     mobile_mode = "on" if visual_mode == "on" else ("off" if visual_mode == "off" else "auto")
+
+    performance_cmd = [
+        sys.executable,
+        str(skills_root / "seo-performance" / "scripts" / "run_performance_audit.py"),
+        "--url",
+        target_url,
+        "--timeout",
+        str(timeout),
+        "--output-dir",
+        str(tracks_root / "performance"),
+    ]
+    if pagespeed_key:
+        performance_cmd.extend(["--pagespeed-key", pagespeed_key])
 
     return [
         {
@@ -1102,46 +1136,24 @@ def _build_orchestration_tracks(
             ],
         },
         {
-            "name": "images",
-            "output_dir": tracks_root / "images",
-            "cmd": [
-                sys.executable,
-                str(skills_root / "seo-images" / "scripts" / "run_image_audit.py"),
-                "--url",
-                target_url,
-                "--timeout",
-                str(timeout),
-                "--output-dir",
-                str(tracks_root / "images"),
-            ],
+            "name": "performance",
+            "output_dir": tracks_root / "performance",
+            "cmd": performance_cmd,
         },
         {
-            "name": "page",
-            "output_dir": tracks_root / "page",
+            "name": "visual",
+            "output_dir": tracks_root / "visual",
             "cmd": [
                 sys.executable,
-                str(skills_root / "seo-page" / "scripts" / "run_page_audit.py"),
+                str(skills_root / "seo-visual" / "scripts" / "run_visual_audit.py"),
+                "--url",
                 target_url,
                 "--timeout",
                 str(timeout),
                 "--visual",
                 visual_mode,
                 "--output-dir",
-                str(tracks_root / "page"),
-            ],
-        },
-        {
-            "name": "geo",
-            "output_dir": tracks_root / "geo",
-            "cmd": [
-                sys.executable,
-                str(skills_root / "seo-geo" / "scripts" / "run_geo_analysis.py"),
-                "--url",
-                target_url,
-                "--timeout",
-                str(timeout),
-                "--output-dir",
-                str(tracks_root / "geo"),
+                str(tracks_root / "visual"),
             ],
         },
     ]
@@ -1152,9 +1164,10 @@ def run_specialist_orchestration(
     output_dir: Path,
     timeout: int,
     visual_mode: str,
+    pagespeed_key: str = "",
 ) -> dict[str, Any]:
     started = datetime.now(UTC).isoformat()
-    track_specs = _build_orchestration_tracks(target_url, output_dir, timeout, visual_mode)
+    track_specs = _build_orchestration_tracks(target_url, output_dir, timeout, visual_mode, pagespeed_key)
 
     def run_track(track: dict[str, Any]) -> dict[str, Any]:
         name = str(track["name"])
@@ -1356,6 +1369,37 @@ def _score_threshold(value: float | None, good: float, poor: float) -> float | N
     return round(100.0 - ((value - good) / (poor - good)) * 70.0, 1)
 
 
+def _summarize_pagespeed_reason(reason: Any) -> str:
+    text = " ".join(str(reason or "").split())
+    if not text:
+        return "PageSpeed request failed"
+    lower = text.lower()
+    if "quota" in lower and ("exceeded" in lower or "limit" in lower):
+        return "PageSpeed API quota exceeded"
+    if "api key" in lower or "key invalid" in lower:
+        return "PageSpeed API key missing or invalid"
+    match = re.search(r"http\s*(\d{3})", lower)
+    if match:
+        code = match.group(1)
+        if code == "429":
+            return "PageSpeed API rate limit reached"
+        if code == "403":
+            return "PageSpeed API access denied"
+        if code == "400":
+            return "PageSpeed API request invalid"
+        return f"HTTP {code} from PageSpeed API"
+    return text[:160]
+
+
+def normalize_report_profile(value: str) -> str:
+    key = str(value or "").strip().lower()
+    normalized = REPORT_PROFILE_ALIASES.get(key)
+    if normalized:
+        return normalized
+    allowed = ", ".join(sorted(set(REPORT_PROFILE_ALIASES.values())))
+    raise ValueError(f"Unsupported report profile '{value}'. Allowed: {allowed}")
+
+
 def _fetch_pagespeed_payload(target_url: str, strategy: str, timeout: int, api_key: str) -> dict[str, Any]:
     endpoint = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
     params: dict[str, Any] = {
@@ -1369,29 +1413,59 @@ def _fetch_pagespeed_payload(target_url: str, strategy: str, timeout: int, api_k
     try:
         resp = requests.get(endpoint, params=params, timeout=max(30, timeout * 2))
     except requests.exceptions.RequestException as exc:
-        return {"status": "error", "reason": str(exc), "http_status": None}
+        raw_reason = str(exc)
+        return {
+            "status": "error",
+            "reason": _summarize_pagespeed_reason(raw_reason),
+            "reason_raw": raw_reason,
+            "http_status": None,
+        }
     if resp.status_code != 200:
-        reason = f"HTTP {resp.status_code}"
+        raw_reason = f"HTTP {resp.status_code}"
         try:
             payload = resp.json()
             if isinstance(payload, dict):
                 err = payload.get("error", {})
                 if isinstance(err, dict) and err.get("message"):
-                    reason = f"{reason}: {err['message']}"
+                    raw_reason = f"{raw_reason}: {err['message']}"
         except Exception:
             pass
-        return {"status": "error", "reason": reason, "http_status": resp.status_code}
+        return {
+            "status": "error",
+            "reason": _summarize_pagespeed_reason(raw_reason),
+            "reason_raw": raw_reason,
+            "http_status": resp.status_code,
+        }
     try:
         return {"status": "ok", "payload": resp.json(), "http_status": 200}
     except Exception as exc:
-        return {"status": "error", "reason": f"Invalid JSON: {exc}", "http_status": 200}
+        raw_reason = f"Invalid JSON: {exc}"
+        return {
+            "status": "error",
+            "reason": _summarize_pagespeed_reason(raw_reason),
+            "reason_raw": raw_reason,
+            "http_status": 200,
+        }
 
 
 def run_cwv_assessment(target_url: str, timeout: int, source: str, pagespeed_key: str) -> dict[str, Any]:
+    key_provided = bool(str(pagespeed_key or "").strip())
     if source == "off":
-        return {"status": "disabled", "source": "off", "reason": "CWV API checks disabled"}
+        return {
+            "status": "disabled",
+            "source": "off",
+            "requested_source": source,
+            "key_provided": key_provided,
+            "reason": "CWV API checks disabled",
+        }
     if source not in ("auto", "pagespeed"):
-        return {"status": "disabled", "source": source, "reason": "Unsupported CWV source"}
+        return {
+            "status": "disabled",
+            "source": source,
+            "requested_source": source,
+            "key_provided": key_provided,
+            "reason": "Unsupported CWV source",
+        }
 
     mobile = _fetch_pagespeed_payload(target_url, "mobile", timeout, pagespeed_key)
     desktop = _fetch_pagespeed_payload(target_url, "desktop", timeout, pagespeed_key)
@@ -1400,6 +1474,8 @@ def run_cwv_assessment(target_url: str, timeout: int, source: str, pagespeed_key
         return {
             "status": "unavailable",
             "source": "pagespeed",
+            "requested_source": source,
+            "key_provided": key_provided,
             "reason": reason,
             "mobile": mobile,
             "desktop": desktop,
@@ -1470,6 +1546,8 @@ def run_cwv_assessment(target_url: str, timeout: int, source: str, pagespeed_key
     return {
         "status": "ok",
         "source": "pagespeed",
+        "requested_source": source,
+        "key_provided": key_provided,
         "reason": "",
         "composite_score": composite,
         "lab_score": lab_score,
@@ -1860,19 +1938,28 @@ def compute_scores(
                 )
             )
     elif cwv and cwv.get("status") == "unavailable":
-        issues.append(
-            make_issue(
-                priority="Low",
-                category="Performance",
-                title="Live CWV API data unavailable",
-                detail=f"PageSpeed/CrUX fetch failed: {cwv.get('reason', 'unknown error')}.",
-                impact="Performance score falls back to response-time proxy and may miss real-user regressions.",
-                recommendation="Provide PAGESPEED_API_KEY and rerun for full lab+field CWV coverage.",
-                evidence=[start_url],
-                effort="Low",
-                expected_lift="Low",
+        requested_source = str(cwv.get("requested_source") or "auto").strip().lower()
+        if requested_source == "pagespeed":
+            reason_short = _summarize_pagespeed_reason(cwv.get("reason"))
+            key_provided = bool(cwv.get("key_provided"))
+            recommendation = (
+                "Check PageSpeed API key quota/billing and rerun for live lab+field CWV metrics."
+                if key_provided
+                else "Optional: set PAGESPEED_API_KEY and rerun for live lab+field CWV metrics."
             )
-        )
+            issues.append(
+                make_issue(
+                    priority="Low",
+                    category="Performance",
+                    title="Live CWV API data unavailable",
+                    detail=f"PageSpeed/CrUX metrics unavailable ({reason_short}). Fallback performance estimation was used.",
+                    impact="Performance score falls back to response-time proxy and may miss real-user regressions.",
+                    recommendation=recommendation,
+                    evidence=[start_url],
+                    effort="Low",
+                    expected_lift="Low",
+                )
+            )
     issues.sort(key=lambda issue: (PRIORITY_ORDER.get(issue["priority"], 99), issue["title"]))
 
     stats = {
@@ -1930,6 +2017,381 @@ def compute_scores(
         "fetch_errors": crawl_info["fetch_errors"],
     }
     return scores, stats, issues
+
+
+def _to_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value).strip())
+    except Exception:
+        return None
+
+
+def _read_track_summaries(orchestration: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    if not orchestration or not orchestration.get("enabled"):
+        return {}
+    summaries: dict[str, dict[str, Any]] = {}
+    for track in orchestration.get("tracks", []):
+        name = str(track.get("name") or "").strip().lower()
+        summary_path = str(track.get("summary_path") or "").strip()
+        if not name or not summary_path:
+            continue
+        payload = _safe_read_json(Path(summary_path))
+        if isinstance(payload, dict):
+            summaries[name] = payload
+    return summaries
+
+
+def _derive_schema_score(summary: dict[str, Any] | None, fallback: float | None) -> float | None:
+    if not summary:
+        return fallback
+    validation = summary.get("validation") if isinstance(summary.get("validation"), dict) else {}
+    passed = int((validation or {}).get("pass") or 0)
+    warned = int((validation or {}).get("warn") or 0)
+    failed = int((validation or {}).get("fail") or 0)
+    opportunities = int(summary.get("opportunity_count") or 0)
+    total = passed + warned + failed
+    if total <= 0:
+        return fallback
+
+    # Conservative calibration for Claude-clone behavior.
+    base = ((passed + (0.4 * warned)) / total) * 100.0
+    penalty = (failed * 6.0) + (warned * 1.5) + (opportunities * 1.2)
+    return round(clamp(base - penalty, 0.0, 100.0), 1)
+
+
+def _derive_visual_score(summary: dict[str, Any] | None) -> float | None:
+    if not summary:
+        return None
+    score = 100.0
+    if summary.get("h1_visible_above_fold") is False:
+        score -= 10.0
+    if summary.get("cta_visible_above_fold") is False:
+        score -= 10.0
+    if summary.get("viewport_meta_present") is False:
+        score -= 10.0
+    if summary.get("horizontal_scroll_mobile") is True:
+        score -= 18.0
+
+    min_font = _to_float(summary.get("mobile_min_font_px"))
+    if min_font is not None and min_font < 16.0:
+        score -= min(18.0, (16.0 - min_font) * 1.5)
+
+    small = int(summary.get("mobile_touch_targets_small") or 0)
+    total = int(summary.get("mobile_touch_targets_total") or 0)
+    if total > 0:
+        touch_ratio = small / max(total, 1)
+        score -= min(22.0, touch_ratio * 18.0)
+
+    overlap_count = int(summary.get("desktop_overlap_issues") or 0)
+    score -= min(14.0, overlap_count * 1.5)
+
+    overflow_count = int(summary.get("desktop_overflow_issues") or 0)
+    if overflow_count > 0:
+        score -= min(8.0, overflow_count * 4.0)
+
+    layout_shift_value = _to_float(summary.get("layout_shift_value"))
+    if layout_shift_value is not None:
+        if layout_shift_value > 0.25:
+            score -= 15.0
+        elif layout_shift_value > 0.1:
+            score -= 10.0
+        elif layout_shift_value > 0.05:
+            score -= 5.0
+
+    responsive_failures = int(summary.get("responsive_breakpoint_failures") or 0)
+    if responsive_failures > 0:
+        score -= min(12.0, responsive_failures * 5.0)
+
+    if summary.get("hero_media_visible_above_fold") is False:
+        score -= 6.0
+
+    issue_count = len(summary.get("issues", [])) if isinstance(summary.get("issues"), list) else 0
+    score -= min(10.0, issue_count * 3.0)
+    return round(clamp(score, 0.0, 100.0), 1)
+
+
+def _derive_performance_score(
+    summary: dict[str, Any] | None,
+    stats: dict[str, Any],
+    fallback: float | None,
+) -> float | None:
+    track_score = _to_float((summary or {}).get("performance_score"))
+    if track_score is not None:
+        return round(clamp(track_score, 0.0, 100.0), 1)
+
+    # Claude-style fallback when live PSI/CrUX isn't available.
+    cwv = stats.get("cwv") if isinstance(stats.get("cwv"), dict) else {}
+    if isinstance(cwv, dict) and str(cwv.get("status") or "").lower() == "unavailable":
+        return 63.0
+    return fallback
+
+
+def _derive_images_score(
+    stats: dict[str, Any],
+    technical_summary: dict[str, Any] | None,
+    performance_summary: dict[str, Any] | None,
+    fallback: float | None,
+) -> float | None:
+    total_images = int(stats.get("total_images") or 0)
+    missing_alt = int(stats.get("missing_alt") or 0)
+    if total_images <= 0:
+        return fallback if fallback is not None else 70.0
+
+    alt_coverage = 1.0 - (missing_alt / max(total_images, 1))
+    score = 60.0 + (alt_coverage * 12.0)
+
+    tech_issues = (technical_summary or {}).get("issues")
+    if isinstance(tech_issues, list):
+        for issue in tech_issues:
+            text = f"{issue.get('title', '')} {issue.get('detail', '')}".lower()
+            if "image" in text and ("dimension" in text or "size" in text):
+                score -= 20.0
+                break
+
+    perf_issues = (performance_summary or {}).get("issues")
+    if isinstance(perf_issues, list):
+        for issue in perf_issues:
+            text = f"{issue.get('title', '')} {issue.get('detail', '')}".lower()
+            if "image" in text:
+                score -= 8.0
+                break
+
+    return round(clamp(score, 0.0, 100.0), 1)
+
+
+def _derive_onpage_score(
+    stats: dict[str, Any],
+    technical_score: float | None,
+    content_score: float | None,
+    visual_score: float | None,
+    fallback: float | None,
+) -> float | None:
+    if technical_score is None and content_score is None and visual_score is None:
+        return fallback
+
+    t = technical_score if technical_score is not None else (fallback or 70.0)
+    c = content_score if content_score is not None else (fallback or 70.0)
+    v = visual_score if visual_score is not None else 70.0
+
+    score = (c * 0.45) + (t * 0.25) + (v * 0.30)
+    score -= int(stats.get("duplicate_titles") or 0) * 3.0
+    score -= int(stats.get("missing_title") or 0) * 2.5
+    score -= int(stats.get("missing_meta") or 0) * 2.0
+    score -= int(stats.get("invalid_h1") or 0) * 1.5
+    return round(clamp(score, 0.0, 100.0), 1)
+
+
+def _derive_ai_readiness_score(
+    stats: dict[str, Any],
+    content_summary: dict[str, Any] | None,
+    fallback: float | None,
+) -> float | None:
+    citation = _to_float((content_summary or {}).get("citation_readiness"))
+    if citation is None:
+        return fallback
+
+    score = citation
+    if bool(stats.get("llms_ok")):
+        score += 3.0
+    if bool(stats.get("about_or_contact_links")):
+        score += 2.0
+    thin_share = (int(stats.get("thin_pages") or 0) / max(int(stats.get("pages_html") or 1), 1))
+    score -= min(12.0, thin_share * 30.0)
+    return round(clamp(score, 0.0, 100.0), 1)
+
+
+def _normalized_priority(value: Any, fallback: str = "Medium") -> str:
+    text = str(value or fallback).strip().title()
+    return text if text in PRIORITY_ORDER else fallback
+
+
+def _default_lift_for_priority(priority: str) -> str:
+    if priority in ("Critical", "High"):
+        return "High"
+    if priority == "Medium":
+        return "Medium"
+    return "Low"
+
+
+def _default_effort_for_priority(priority: str) -> str:
+    if priority == "Critical":
+        return "High"
+    if priority == "High":
+        return "Medium"
+    return "Low"
+
+
+def _merge_specialist_issues(
+    target_url: str,
+    base_issues: list[dict[str, Any]],
+    summaries: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = list(base_issues)
+    category_map = {
+        "technical": "Technical SEO",
+        "content": "Content Quality",
+        "schema": "Schema",
+        "sitemap": "Crawl Control",
+        "performance": "Performance",
+        "visual": "On-Page SEO",
+    }
+
+    def append_issue(raw: dict[str, Any], category: str) -> None:
+        priority = _normalized_priority(raw.get("priority"), "Medium")
+        title = str(raw.get("title") or "").strip() or "Specialist finding"
+        detail = str(raw.get("detail") or "").strip() or "No detail provided."
+        recommendation = str(raw.get("recommendation") or "").strip() or "Apply specialist remediation guidance."
+        if len(detail) > 240:
+            detail = detail[:237].rstrip() + "..."
+        if len(recommendation) > 220:
+            recommendation = recommendation[:217].rstrip() + "..."
+        evidence = raw.get("evidence")
+        evidence_urls = evidence if isinstance(evidence, list) else [target_url]
+        merged.append(
+            make_issue(
+                priority=priority,
+                category=category,
+                title=title,
+                detail=detail,
+                impact=detail,
+                recommendation=recommendation,
+                evidence=evidence_urls,
+                effort=_default_effort_for_priority(priority),
+                expected_lift=_default_lift_for_priority(priority),
+            )
+        )
+
+    for name, summary in summaries.items():
+        category = category_map.get(name, "SEO")
+        raw_issues = summary.get("issues")
+        if isinstance(raw_issues, list):
+            for raw in raw_issues:
+                if isinstance(raw, dict):
+                    append_issue(raw, category)
+
+    schema_summary = summaries.get("schema") or {}
+    validation = schema_summary.get("validation") if isinstance(schema_summary.get("validation"), dict) else {}
+    schema_fail = int((validation or {}).get("fail") or 0)
+    schema_warn = int((validation or {}).get("warn") or 0)
+    schema_opps = int(schema_summary.get("opportunity_count") or 0)
+    if schema_fail > 0:
+        merged.append(
+            make_issue(
+                priority="High",
+                category="Schema",
+                title="Schema validation failures detected",
+                detail=f"{schema_fail} schema nodes failed validation.",
+                impact="Structured data issues can block rich result eligibility.",
+                recommendation="Fix failing schema nodes first, then rerun validation.",
+                evidence=[target_url],
+                effort="Medium",
+                expected_lift="High",
+            )
+        )
+    if schema_warn > 0:
+        merged.append(
+            make_issue(
+                priority="Medium",
+                category="Schema",
+                title="Schema validation warnings detected",
+                detail=f"{schema_warn} schema nodes returned warnings.",
+                impact="Warnings can reduce eligibility confidence and snippet quality.",
+                recommendation="Address warning-level schema issues on high-value templates.",
+                evidence=[target_url],
+                effort="Low",
+                expected_lift="Medium",
+            )
+        )
+    if schema_opps > 0:
+        merged.append(
+            make_issue(
+                priority="Low",
+                category="Schema",
+                title="Additional schema opportunities identified",
+                detail=f"{schema_opps} schema enhancement opportunities detected.",
+                impact="Additional schema can improve SERP feature and citation coverage.",
+                recommendation="Implement highest-impact opportunities first (Organization/WebSite/Page-type schema).",
+                evidence=[target_url],
+                effort="Low",
+                expected_lift="Low",
+            )
+        )
+
+    sitemap_summary = summaries.get("sitemap") or {}
+    sitemap_issues = ((sitemap_summary.get("summary") or {}).get("issues")) if isinstance(sitemap_summary, dict) else None
+    if isinstance(sitemap_issues, list):
+        for raw in sitemap_issues:
+            if isinstance(raw, dict):
+                append_issue(raw, "Crawl Control")
+
+    deduped: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in merged:
+        key = (str(item.get("category") or "").lower(), str(item.get("title") or "").lower())
+        existing = deduped.get(key)
+        if existing is None:
+            deduped[key] = item
+            continue
+        if PRIORITY_ORDER.get(str(item.get("priority")), 99) < PRIORITY_ORDER.get(str(existing.get("priority")), 99):
+            deduped[key] = item
+
+    final_issues = list(deduped.values())
+    final_issues.sort(key=lambda issue: (PRIORITY_ORDER.get(issue["priority"], 99), issue["title"]))
+    return final_issues
+
+
+def synthesize_from_orchestration(
+    *,
+    target_url: str,
+    scores: dict[str, float | None],
+    stats: dict[str, Any],
+    issues: list[dict[str, Any]],
+    orchestration: dict[str, Any] | None,
+) -> tuple[dict[str, float | None], dict[str, Any], list[dict[str, Any]]]:
+    summaries = _read_track_summaries(orchestration)
+    if not summaries:
+        return scores, stats, issues
+
+    technical_summary = summaries.get("technical") or {}
+    content_summary = summaries.get("content") or {}
+    schema_summary = summaries.get("schema") or {}
+    performance_summary = summaries.get("performance") or {}
+    visual_summary = summaries.get("visual") or {}
+
+    technical_score = _to_float(technical_summary.get("technical_score")) or scores.get("technical")
+    tech_issues = technical_summary.get("issues") if isinstance(technical_summary.get("issues"), list) else []
+    if technical_score is not None and isinstance(tech_issues, list):
+        high_n = sum(1 for i in tech_issues if _normalized_priority((i or {}).get("priority"), "Medium") == "High")
+        med_n = sum(1 for i in tech_issues if _normalized_priority((i or {}).get("priority"), "Medium") == "Medium")
+        low_n = sum(1 for i in tech_issues if _normalized_priority((i or {}).get("priority"), "Medium") == "Low")
+        technical_score = clamp(float(technical_score) - (high_n * 3.0) - (med_n * 0.95) - (low_n * 0.4), 0.0, 100.0)
+    content_score = _to_float(content_summary.get("content_quality_score")) or scores.get("content")
+    schema_score = _derive_schema_score(schema_summary, scores.get("schema"))
+    visual_score = _derive_visual_score(visual_summary)
+    performance_score = _derive_performance_score(performance_summary, stats, scores.get("performance"))
+    image_score = _derive_images_score(stats, technical_summary, performance_summary, scores.get("images"))
+    onpage_score = _derive_onpage_score(stats, technical_score, content_score, visual_score, scores.get("onpage"))
+    ai_score = _derive_ai_readiness_score(stats, content_summary, scores.get("ai_readiness"))
+
+    calibrated_scores: dict[str, float | None] = {
+        "technical": round(float(technical_score), 1) if technical_score is not None else None,
+        "content": round(float(content_score), 1) if content_score is not None else None,
+        "onpage": round(float(onpage_score), 1) if onpage_score is not None else None,
+        "schema": round(float(schema_score), 1) if schema_score is not None else None,
+        "performance": round(float(performance_score), 1) if performance_score is not None else None,
+        "images": round(float(image_score), 1) if image_score is not None else None,
+        "ai_readiness": round(float(ai_score), 1) if ai_score is not None else None,
+    }
+
+    if performance_score is not None and _to_float((performance_summary or {}).get("performance_score")) is None:
+        stats["performance_source"] = "specialist-estimate"
+    stats["score_source"] = "specialist-synthesized"
+
+    merged_issues = _merge_specialist_issues(target_url=target_url, base_issues=issues, summaries=summaries)
+    return calibrated_scores, stats, merged_issues
 
 
 def aggregate_health_score(scores: dict[str, float | None]) -> tuple[float, list[str]]:
@@ -2091,6 +2553,69 @@ def _projected_score_series(current_score: float, issues: list[dict[str, Any]]) 
     after_medium = clamp(after_high + min(8.0, m * 1.2), 0.0, 100.0)
     full = clamp(after_medium + min(5.0, l * 0.5), 0.0, 100.0)
     return [round(current_score, 1), round(after_critical, 1), round(after_high, 1), round(after_medium, 1), round(full, 1)]
+
+
+def _derive_strengths(
+    stats: dict[str, Any],
+    scores: dict[str, float | None],
+    issues: list[dict[str, Any]],
+    limit: int = 6,
+) -> list[str]:
+    pages_html = int(stats.get("pages_html") or 0)
+    total_images = int(stats.get("total_images") or 0)
+    missing_alt = int(stats.get("missing_alt") or 0)
+    thin_pages = int(stats.get("thin_pages") or 0)
+    error_pages = int(stats.get("error_pages") or 0)
+    noindex_pages = int(stats.get("noindex_pages") or 0)
+    schema_pages = int(stats.get("schema_pages") or 0)
+    missing_title = int(stats.get("missing_title") or 0)
+    missing_meta = int(stats.get("missing_meta") or 0)
+
+    metadata_completeness = (
+        ((pages_html - missing_title) / max(pages_html, 1))
+        + ((pages_html - missing_meta) / max(pages_html, 1))
+    ) / 2.0
+    schema_coverage = schema_pages / max(pages_html, 1)
+    thin_share = thin_pages / max(pages_html, 1)
+    alt_coverage = 1.0 if total_images == 0 else 1.0 - (missing_alt / max(total_images, 1))
+
+    counts = Counter(str(item.get("priority") or "Low").title() for item in issues)
+    critical_count = int(counts.get("Critical", 0))
+    high_count = int(counts.get("High", 0))
+
+    strengths: list[str] = []
+    if stats.get("robots_ok"):
+        strengths.append("`robots.txt` is accessible and provides crawler directives.")
+    if stats.get("sitemap_ok"):
+        strengths.append("`sitemap.xml` is discoverable, supporting index discovery.")
+    if stats.get("llms_ok"):
+        strengths.append("`llms.txt` is present, improving AI-crawler guidance.")
+    if metadata_completeness >= 0.9:
+        strengths.append(f"Metadata completeness is strong at {round(metadata_completeness * 100, 1)}%.")
+    if schema_coverage >= 0.7:
+        strengths.append(f"Schema coverage is healthy at {round(schema_coverage * 100, 1)}% of HTML pages.")
+    if alt_coverage >= 0.95 and total_images > 0:
+        strengths.append(f"Image accessibility is strong with {round(alt_coverage * 100, 1)}% alt-text coverage.")
+    if thin_share <= 0.25:
+        strengths.append(f"Thin-content footprint is controlled at {round(thin_share * 100, 1)}%.")
+    if error_pages == 0:
+        strengths.append("No crawl-time HTTP errors were detected in sampled URLs.")
+    if noindex_pages == 0:
+        strengths.append("No unexpected `noindex` pages were found in the crawl sample.")
+    if critical_count == 0:
+        strengths.append("No critical-priority issues were detected in this crawl sample.")
+    if high_count <= 2:
+        strengths.append("High-priority issue volume is limited, reducing immediate remediation pressure.")
+
+    measured_scores = [float(v) for v in scores.values() if isinstance(v, (int, float))]
+    if measured_scores:
+        high_scoring = sum(1 for v in measured_scores if v >= 75.0)
+        if high_scoring >= 3:
+            strengths.append(f"{high_scoring} SEO tracks are currently scoring 75+.")
+
+    if not strengths:
+        strengths.append("Baseline SEO signals are stable, with opportunities concentrated in optimization depth.")
+    return strengths[:limit]
 
 
 def _estimate_eeat_dimensions(
@@ -3515,6 +4040,1020 @@ def build_html_report(
 """
 
 
+def build_html_report_authentic(
+    target_url: str,
+    generated_at: str,
+    total_score: float,
+    grade: str,
+    band: str,
+    business_label: str,
+    business_confidence: float,
+    scores: dict[str, float | None],
+    stats: dict[str, Any],
+    issues: list[dict[str, Any]],
+    quick_wins: list[dict[str, Any]],
+    visual: dict[str, Any],
+    orchestration: dict[str, Any] | None = None,
+) -> str:
+    def badge_class(value: float | None) -> str:
+        if value is None:
+            return "score-orange"
+        if value >= 80:
+            return "score-green"
+        if value >= 65:
+            return "score-yellow"
+        if value >= 50:
+            return "score-orange"
+        return "score-red"
+
+    def priority_badge(priority: str) -> str:
+        p = (priority or "Low").strip().lower()
+        if p == "critical":
+            return "badge-critical"
+        if p == "high":
+            return "badge-high"
+        if p == "medium":
+            return "badge-medium"
+        return "badge-low"
+
+    score_rows: list[str] = []
+    weighted_total = 0.0
+    for key in ("technical", "content", "onpage", "schema", "performance", "images", "ai_readiness"):
+        value = scores.get(key)
+        weight_pct = int(round(WEIGHTS[key] * 100))
+        weighted = (float(value) if value is not None else 0.0) * WEIGHTS[key]
+        weighted_total += weighted
+        score_rows.append(
+            f"<tr><td>{escape(SCORE_LABELS[key])}</td><td>{escape(_fmt_number(value, 1))}/100</td><td>{weight_pct}%</td><td>{escape(_fmt_number(weighted, 1))}</td></tr>"
+        )
+
+    issues_by_priority = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
+    for item in issues:
+        p = str(item.get("priority") or "Low").title()
+        if p in issues_by_priority:
+            issues_by_priority[p] += 1
+
+    sorted_issues = sorted(
+        issues,
+        key=lambda i: (PRIORITY_ORDER.get(str(i.get("priority") or "Low").title(), 9), str(i.get("title") or "")),
+    )
+    issue_items = "".join(
+        f"<div class='issue'><span class='issue-badge {priority_badge(str(item.get('priority') or 'Low'))}'>{escape(str(item.get('priority') or 'Low').upper())}</span><div class='issue-text'><strong>{escape(str(item.get('title') or 'Untitled issue'))}</strong><br>{escape(str(item.get('detail') or ''))}<br><em>Action:</em> {escape(str(item.get('recommendation') or ''))}</div></div>"
+        for item in sorted_issues[:5]
+    )
+    if not issue_items:
+        issue_items = "<p>No material issues detected in sampled crawl.</p>"
+
+    quick_win_items = "".join(
+        f"<li>{escape(item.get('title', 'Quick win'))}: {escape(item.get('recommendation', item.get('detail', '')))}</li>"
+        for item in quick_wins
+    )
+    if not quick_win_items:
+        quick_win_items = "<li>No quick wins identified in this sample.</li>"
+
+    category_sets = {
+        "technical": {
+            "Technical SEO",
+            "Crawl Coverage",
+            "Indexability",
+            "Canonicalization",
+            "Crawl Control",
+            "Security Signals",
+        },
+        "content": {"Content Quality", "Content Structure", "Trust Signals"},
+        "onpage": {"On-Page SEO", "On-page", "Onpage"},
+        "schema": {"Schema"},
+        "performance": {"Performance"},
+        "images": {"Images"},
+        "ai_readiness": {"AI Readiness"},
+    }
+
+    def category_findings(key: str, limit: int = 6) -> str:
+        allowed = category_sets.get(key, set())
+        picked = [i for i in sorted_issues if str(i.get("category") or "") in allowed][:limit]
+        if not picked:
+            return "<li>No significant findings in sampled URLs.</li>"
+        return "".join(
+            f"<li><strong>{escape(str(i.get('title') or 'Issue'))}</strong>: {escape(str(i.get('detail') or ''))}</li>"
+            for i in picked
+        )
+
+    track_summaries: dict[str, dict[str, Any]] = {}
+    if orchestration and orchestration.get("enabled"):
+        for track in orchestration.get("tracks", []):
+            name = str(track.get("name") or "").strip().lower()
+            summary_path = str(track.get("summary_path") or "").strip()
+            if not name or not summary_path:
+                continue
+            parsed = _safe_read_json(Path(summary_path))
+            if isinstance(parsed, dict):
+                track_summaries[name] = parsed
+
+    technical_summary = track_summaries.get("technical") or {}
+    content_summary = track_summaries.get("content") or {}
+    schema_summary = track_summaries.get("schema") or {}
+    sitemap_summary = track_summaries.get("sitemap") or {}
+    performance_summary = track_summaries.get("performance") or {}
+    validation = schema_summary.get("validation") if isinstance(schema_summary.get("validation"), dict) else {}
+    detections = schema_summary.get("detections") if isinstance(schema_summary.get("detections"), dict) else {}
+
+    pages_total = int(stats.get("pages_total") or 0)
+    pages_successful = int(stats.get("pages_successful") or 0)
+    pages_html = int(stats.get("pages_html") or 0)
+    pages_non_html = int(stats.get("pages_non_html") or 0)
+    missing_title = int(stats.get("missing_title") or 0)
+    missing_meta = int(stats.get("missing_meta") or 0)
+    thin_pages = int(stats.get("thin_pages") or 0)
+    weak_internal = int(stats.get("weak_internal_link_pages") or 0)
+    total_images = int(stats.get("total_images") or 0)
+    missing_alt = int(stats.get("missing_alt") or 0)
+    error_pages = int(stats.get("error_pages") or 0)
+    status_4xx = int(stats.get("status_4xx") or 0)
+    status_5xx = int(stats.get("status_5xx") or 0)
+    long_redirects = int(stats.get("long_redirects") or 0)
+    skipped_by_robots = int(stats.get("skipped_by_robots") or 0)
+    fetch_errors = int(stats.get("fetch_errors") or 0)
+    schema_pages = int(stats.get("schema_pages") or 0)
+    noindex_pages = int(stats.get("noindex_pages") or 0)
+    invalid_h1 = int(stats.get("invalid_h1") or 0)
+
+    title_completeness = round(((pages_html - missing_title) / max(pages_html, 1)) * 100, 1)
+    meta_completeness = round(((pages_html - missing_meta) / max(pages_html, 1)) * 100, 1)
+    metadata_completeness = round((title_completeness + meta_completeness) / 2.0, 1)
+    thin_share = round((thin_pages / max(pages_html, 1)) * 100, 1)
+    alt_coverage = round((1 - (missing_alt / max(total_images, 1))) * 100, 1) if total_images > 0 else 100.0
+    schema_coverage = round((schema_pages / max(pages_html, 1)) * 100, 1)
+
+    security_headers = stats.get("security_headers") if isinstance(stats.get("security_headers"), dict) else {}
+    headers_present = security_headers.get("present") if isinstance(security_headers.get("present"), list) else []
+    headers_missing = security_headers.get("missing") if isinstance(security_headers.get("missing"), list) else []
+    header_coverage = round((len(headers_present) / max(len(SECURITY_HEADERS), 1)) * 100, 1)
+
+    examples = stats.get("example_urls") if isinstance(stats.get("example_urls"), dict) else {}
+
+    def render_example_urls(key: str, limit: int = 6) -> str:
+        urls = examples.get(key) if isinstance(examples.get(key), list) else []
+        if not urls:
+            return "None"
+        return "<br>".join(f"<code>{escape(str(u))}</code>" for u in urls[:limit])
+
+    def issue_metric_rows(limit: int = 12) -> str:
+        rows = []
+        for item in sorted_issues[:limit]:
+            evidence = item.get("evidence") if isinstance(item.get("evidence"), list) else []
+            rows.append(
+                "<tr>"
+                f"<td>{escape(str(item.get('priority') or 'Low'))}</td>"
+                f"<td>{escape(str(item.get('category') or 'General'))}</td>"
+                f"<td><strong>{escape(str(item.get('title') or 'Untitled issue'))}</strong><br>{escape(str(item.get('detail') or ''))}</td>"
+                f"<td>{len(evidence)}</td>"
+                f"<td>{escape(str(item.get('effort') or 'n/a'))}</td>"
+                f"<td>{escape(str(item.get('expected_lift') or 'n/a'))}</td>"
+                "</tr>"
+            )
+        if not rows:
+            return "<tr><td colspan='6'>No material issues detected in sampled crawl.</td></tr>"
+        return "".join(rows)
+
+    top_issue_rows = issue_metric_rows(12)
+
+    quick_win_high_lift = sum(
+        1
+        for item in quick_wins
+        if str(item.get("expected_lift") or "").strip().lower() == "high"
+        and str(item.get("effort") or "").strip().lower() == "low"
+    )
+    strengths = _derive_strengths(stats, scores, issues, limit=8)
+    strengths_html = "".join(f"<li>{escape(item)}</li>" for item in strengths)
+
+    critical_issues = [i for i in sorted_issues if str(i.get("priority") or "").title() == "Critical"]
+    high_issues = [i for i in sorted_issues if str(i.get("priority") or "").title() == "High"]
+    medium_issues = [i for i in sorted_issues if str(i.get("priority") or "").title() == "Medium"]
+
+    onpage_summary_rows = "".join(
+        [
+            f"<tr><td>Missing titles</td><td>{escape(_fmt_number(missing_title, 0))}/{escape(_fmt_number(pages_html, 0))}</td></tr>",
+            f"<tr><td>Missing meta descriptions</td><td>{escape(_fmt_number(missing_meta, 0))}/{escape(_fmt_number(pages_html, 0))}</td></tr>",
+            f"<tr><td>Invalid H1 patterns</td><td>{escape(_fmt_number(invalid_h1, 0))}</td></tr>",
+            f"<tr><td>Noindex pages</td><td>{escape(_fmt_number(noindex_pages, 0))}</td></tr>",
+            f"<tr><td>Title completeness</td><td>{escape(_fmt_number(title_completeness, 1))}%</td></tr>",
+            f"<tr><td>Meta completeness</td><td>{escape(_fmt_number(meta_completeness, 1))}%</td></tr>",
+        ]
+    )
+
+    technical_snapshot_rows = "".join(
+        [
+            f"<tr><td>Robots.txt</td><td>{_bool_label(stats.get('robots_ok'))}</td></tr>",
+            f"<tr><td>Sitemap discovery</td><td>{_bool_label(stats.get('sitemap_ok'))}</td></tr>",
+            f"<tr><td>llms.txt</td><td>{_bool_label(stats.get('llms_ok'))}</td></tr>",
+            f"<tr><td>Security headers present</td><td>{escape(_fmt_number(len(headers_present), 0))}/{escape(_fmt_number(len(SECURITY_HEADERS), 0))} ({escape(_fmt_number(header_coverage, 1))}%)</td></tr>",
+            f"<tr><td>HTTP errors</td><td>{escape(_fmt_number(error_pages, 0))} ({escape(_fmt_number(status_4xx, 0))}x 4xx / {escape(_fmt_number(status_5xx, 0))}x 5xx)</td></tr>",
+            f"<tr><td>Redirect chains &gt;2 hops</td><td>{escape(_fmt_number(long_redirects, 0))}</td></tr>",
+            f"<tr><td>Fetch failures</td><td>{escape(_fmt_number(fetch_errors, 0))}</td></tr>",
+            f"<tr><td>Skipped by robots</td><td>{escape(_fmt_number(skipped_by_robots, 0))}</td></tr>",
+        ]
+    )
+
+    content_snapshot_rows = "".join(
+        [
+            f"<tr><td>Thin content pages (&lt;300 words)</td><td>{escape(_fmt_number(thin_pages, 0))}/{escape(_fmt_number(pages_html, 0))} ({escape(_fmt_number(thin_share, 1))}%)</td></tr>",
+            f"<tr><td>Word count p25 / median / p75</td><td>{escape(_fmt_number(stats.get('word_count_p25'), 0))} / {escape(_fmt_number(stats.get('word_count_median'), 0))} / {escape(_fmt_number(stats.get('word_count_p75'), 0))}</td></tr>",
+            f"<tr><td>Weak internal-link pages</td><td>{escape(_fmt_number(weak_internal, 0))}</td></tr>",
+            f"<tr><td>About/Contact trust signals</td><td>{_bool_label(stats.get('about_or_contact_links'))}</td></tr>",
+            f"<tr><td>Citation readiness</td><td>{escape(_fmt_number(content_summary.get('citation_readiness'), 1))}/100</td></tr>",
+        ]
+    )
+
+    schema_types = detections.get("unique_types") if isinstance(detections.get("unique_types"), list) else []
+    schema_types_text = ", ".join(str(t) for t in schema_types[:12]) if schema_types else "None"
+
+    perf_mobile = performance_summary.get("mobile") if isinstance(performance_summary.get("mobile"), dict) else {}
+    perf_desktop = performance_summary.get("desktop") if isinstance(performance_summary.get("desktop"), dict) else {}
+    perf_mobile_status = perf_mobile.get("status") or (stats.get("cwv") or {}).get("status") or "n/a"
+    perf_desktop_status = perf_desktop.get("status") or "n/a"
+    perf_mobile_reason = str(perf_mobile.get("reason") or "")[:220]
+    perf_desktop_reason = str(perf_desktop.get("reason") or "")[:220]
+
+    sitemap_summary_block = sitemap_summary.get("summary") if isinstance(sitemap_summary.get("summary"), dict) else {}
+    sitemap_rows = "".join(
+        [
+            f"<tr><td>Files analyzed</td><td>{escape(_fmt_number(sitemap_summary_block.get('files_analyzed'), 0))}</td></tr>",
+            f"<tr><td>Total URLs in sitemap</td><td>{escape(_fmt_number(sitemap_summary_block.get('url_count_total'), 0))}</td></tr>",
+            f"<tr><td>Sample checked</td><td>{escape(_fmt_number(sitemap_summary_block.get('sample_checked'), 0))}</td></tr>",
+            f"<tr><td>Non-200 URLs</td><td>{escape(_fmt_number(sitemap_summary_block.get('non_200_count'), 0))}</td></tr>",
+            f"<tr><td>Noindex URLs in sitemap</td><td>{escape(_fmt_number(sitemap_summary_block.get('noindex_count'), 0))}</td></tr>",
+        ]
+    )
+
+    track_metric_rows = ""
+    if orchestration and orchestration.get("enabled"):
+        rows = []
+        for track in orchestration.get("tracks", []):
+            metrics = track.get("summary_metrics") if isinstance(track.get("summary_metrics"), dict) else {}
+            priority_counts = metrics.get("priority_counts")
+            if isinstance(priority_counts, dict):
+                priority_text = ", ".join(f"{k}:{v}" for k, v in priority_counts.items())
+            else:
+                priority_text = "n/a"
+            score_hint = (
+                metrics.get("health_score")
+                or metrics.get("overall_score")
+                or metrics.get("technical_score")
+                or metrics.get("content_quality_score")
+                or metrics.get("performance_score")
+                or metrics.get("score")
+            )
+            issues_hint = metrics.get("issues_count") or metrics.get("total_issues") or metrics.get("issues") or "n/a"
+            rows.append(
+                "<tr>"
+                f"<td>{escape(str(track.get('name') or 'track'))}</td>"
+                f"<td>{escape(str(track.get('status') or 'failed'))}</td>"
+                f"<td>{escape(_fmt_number(score_hint, 1))}</td>"
+                f"<td>{escape(str(issues_hint))}</td>"
+                f"<td>{escape(priority_text)}</td>"
+                "</tr>"
+            )
+        track_metric_rows = "".join(rows)
+    if not track_metric_rows:
+        track_metric_rows = "<tr><td colspan='5'>Track metric snapshot unavailable.</td></tr>"
+
+    specialist_issue_blocks: list[str] = []
+    for track_name in ("technical", "content", "schema", "sitemap", "performance", "visual"):
+        summary = track_summaries.get(track_name) or {}
+        track_issues = summary.get("issues") if isinstance(summary.get("issues"), list) else []
+        if not track_issues:
+            continue
+        bullets = "".join(
+            f"<li><strong>{escape(str(item.get('title') or 'Issue'))}</strong>: {escape(str(item.get('detail') or item.get('recommendation') or ''))}</li>"
+            for item in track_issues[:5]
+            if isinstance(item, dict)
+        )
+        if not bullets:
+            continue
+        specialist_issue_blocks.append(f"<h3>{escape(track_name.title())} Specialist Issues</h3><ul class='findings'>{bullets}</ul>")
+    specialist_issue_html = "".join(specialist_issue_blocks) if specialist_issue_blocks else "<p class='mini'>No specialist issue payloads captured.</p>"
+
+    visual_findings = [
+        f"H1 above fold: {_bool_label(visual.get('h1_visible_above_fold'))}",
+        f"CTA above fold: {_bool_label(visual.get('cta_visible_above_fold'))}",
+        f"Viewport meta: {_bool_label(visual.get('viewport_meta_present'))}",
+        f"Horizontal mobile scroll: {_bool_label(visual.get('horizontal_scroll_mobile'))}",
+        f"Touch targets <48px: {_fmt_number(visual.get('mobile_touch_targets_small'), 0)}/{_fmt_number(visual.get('mobile_touch_targets_total'), 0)}",
+        f"Minimum mobile font size: {_fmt_number(visual.get('mobile_min_font_px'), 1)}px",
+        f"Text readability >=16px: {_bool_label(visual.get('mobile_text_readability_ok'))}",
+        f"OCR text coverage: {_fmt_number(visual.get('ocr_sections_with_text'), 0)}/{_fmt_number(visual.get('ocr_sections_total'), 0)}",
+    ]
+    visual_items = "".join(f"<li>{escape(line)}</li>" for line in visual_findings)
+    visual_sections = visual.get("sections") if isinstance(visual.get("sections"), list) else []
+    visual_section_rows = ""
+    if visual_sections:
+        rows = []
+        for section in visual_sections[:8]:
+            rows.append(
+                "<tr>"
+                f"<td>{escape(str(section.get('label') or section.get('semantic_type') or 'Section'))}</td>"
+                f"<td>{escape(_fmt_number(section.get('word_count'), 0))}</td>"
+                f"<td>{escape(_fmt_number(section.get('cta_count'), 0))}</td>"
+                f"<td>{escape(_fmt_number(section.get('form_count'), 0))}</td>"
+                f"<td>{escape(str(section.get('capture_reason') or section.get('observation') or ''))}</td>"
+                "</tr>"
+            )
+        visual_section_rows = "".join(rows)
+    if not visual_section_rows:
+        visual_section_rows = "<tr><td colspan='5'>Section-level visual captures unavailable.</td></tr>"
+
+    viewport_shots = visual.get("viewport_screenshots") if isinstance(visual.get("viewport_screenshots"), list) else []
+    visual_shot_rows = ""
+    if viewport_shots:
+        rows = []
+        for shot in viewport_shots[:8]:
+            if isinstance(shot, dict):
+                label = str(shot.get("label") or "viewport")
+                path = str(shot.get("path") or "")
+                rows.append(f"<tr><td><strong>{escape(label)}</strong>: <code>{escape(path or 'n/a')}</code></td></tr>")
+            else:
+                rows.append(f"<tr><td><code>{escape(str(shot))}</code></td></tr>")
+        visual_shot_rows = "".join(rows)
+    if not visual_shot_rows:
+        visual_shot_rows = "<tr><td>No viewport screenshot paths recorded.</td></tr>"
+
+    orchestration_rows = ""
+    if orchestration and orchestration.get("enabled"):
+        rows = []
+        for track in orchestration.get("tracks", []):
+            metrics = track.get("summary_metrics") or {}
+            metrics_text = ", ".join(f"{k}={v}" for k, v in metrics.items()) if metrics else "n/a"
+            rows.append(
+                f"<tr><td>{escape(str(track.get('name') or 'track'))}</td><td>{escape(str(track.get('status') or 'failed'))}</td><td>{escape(_fmt_number(track.get('duration_sec'), 2))}s</td><td>{escape(metrics_text)}</td></tr>"
+            )
+        orchestration_rows = "".join(rows)
+    if not orchestration_rows:
+        orchestration_rows = "<tr><td colspan='4'>Specialist execution data unavailable.</td></tr>"
+
+    eeat_rows = ""
+    eeat = content_summary.get("eeat_factors")
+    if isinstance(eeat, dict):
+        for dim in ("experience", "expertise", "authoritativeness", "trustworthiness"):
+            val = _fmt_number(eeat.get(dim), 1)
+            eeat_rows += f"<tr><td>{escape(dim.title())}</td><td>{escape(val)}/100</td></tr>"
+    if not eeat_rows:
+        eeat_rows = "<tr><td colspan='2'>No E-E-A-T factor data available.</td></tr>"
+
+    ai_policy_rows = ""
+    ai_policy = (((technical_summary.get("signals") or {}).get("robots") or {}).get("ai_policy"))
+    if isinstance(ai_policy, dict):
+        for bot, status in ai_policy.items():
+            ai_policy_rows += f"<tr><td>{escape(str(bot))}</td><td>{escape(str(status))}</td></tr>"
+    if not ai_policy_rows:
+        ai_policy_rows = "<tr><td colspan='2'>AI crawler policy data unavailable.</td></tr>"
+
+    schema_rows = ""
+    schema_rows += f"<tr><td>JSON-LD scripts</td><td>{escape(_fmt_number((detections or {}).get('jsonld_script_count'), 0))}</td></tr>"
+    schema_rows += f"<tr><td>Parsed typed nodes</td><td>{escape(_fmt_number((detections or {}).get('typed_nodes'), 0))}</td></tr>"
+    schema_rows += f"<tr><td>Validation pass</td><td>{escape(_fmt_number((validation or {}).get('pass'), 0))}</td></tr>"
+    schema_rows += f"<tr><td>Validation warnings</td><td>{escape(_fmt_number((validation or {}).get('warn'), 0))}</td></tr>"
+    schema_rows += f"<tr><td>Validation failures</td><td>{escape(_fmt_number((validation or {}).get('fail'), 0))}</td></tr>"
+    schema_rows += f"<tr><td>Opportunities</td><td>{escape(_fmt_number(schema_summary.get('opportunity_count'), 0))}</td></tr>"
+
+    critical_items = critical_issues[:5]
+    high_items = high_issues[:7]
+    medium_items = medium_issues[:8]
+
+    def issue_bullets(items: list[dict[str, Any]], empty: str) -> str:
+        if not items:
+            return f"<li>{escape(empty)}</li>"
+        return "".join(
+            f"<li><strong>{escape(str(x.get('title') or 'Issue'))}</strong>: {escape(str(x.get('recommendation') or x.get('detail') or ''))}</li>"
+            for x in items
+        )
+
+    critical_bullets = issue_bullets(critical_items, "No critical issues in sampled crawl.")
+    high_bullets = issue_bullets(high_items, "No high-priority issues in sampled crawl.")
+    medium_bullets = issue_bullets(medium_items, "No medium-priority issues in sampled crawl.")
+    action_plan_rows = (
+        f"<tr><td>Critical</td><td>{issues_by_priority['Critical']}</td><td>Very high</td><td>0-48h</td></tr>"
+        f"<tr><td>High</td><td>{issues_by_priority['High']}</td><td>High</td><td>Week 1</td></tr>"
+        f"<tr><td>Medium</td><td>{issues_by_priority['Medium']}</td><td>Medium</td><td>Weeks 2-4</td></tr>"
+        f"<tr><td>Low</td><td>{issues_by_priority['Low']}</td><td>Low</td><td>Backlog</td></tr>"
+    )
+
+    projection = _projected_score_series(total_score, issues)
+    projection_gain = round(float(projection[4]) - float(projection[0]), 1)
+    not_measured = [SCORE_LABELS[k] for k in ("technical", "content", "onpage", "schema", "performance", "images", "ai_readiness") if scores.get(k) is None]
+    measurement_status = "All core categories measured." if not not_measured else f"Not measured: {', '.join(not_measured)}"
+    projection_rows = (
+        f"<tr><td>Current</td><td>{escape(_fmt_number(projection[0], 1))}</td></tr>"
+        f"<tr><td>After Critical Fixes</td><td>{escape(_fmt_number(projection[1], 1))}</td></tr>"
+        f"<tr><td>After High Fixes</td><td>{escape(_fmt_number(projection[2], 1))}</td></tr>"
+        f"<tr><td>After Medium Fixes</td><td>{escape(_fmt_number(projection[3], 1))}</td></tr>"
+        f"<tr><td>Full Optimization</td><td>{escape(_fmt_number(projection[4], 1))}</td></tr>"
+    )
+
+    timeline_lines = [
+        f"0-48h: resolve {issues_by_priority['Critical']} critical issue(s) and validate robots/sitemap/indexability.",
+        f"Week 1: address {issues_by_priority['High']} high-priority issue(s) with highest ranking impact.",
+        f"Weeks 2-4: clear {issues_by_priority['Medium']} medium-priority structural improvements.",
+        f"Backlog: track {issues_by_priority['Low']} low-priority hardening and monitoring tasks.",
+    ]
+    timeline_html = "".join(f"<li>{escape(line)}</li>" for line in timeline_lines)
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SEO Audit Report | {escape(target_url)} | {escape(generated_at[:10])}</title>
+<style>
+  :root {{
+    --primary: #1a1a3e;
+    --accent: #dc7814;
+    --accent-light: #f4a340;
+    --green: #2ecc71;
+    --yellow: #f1c40f;
+    --orange: #e67e22;
+    --red: #e74c3c;
+    --gray-50: #f8f9fa;
+    --gray-100: #f1f3f5;
+    --gray-200: #e9ecef;
+    --gray-300: #dee2e6;
+    --gray-500: #868e96;
+    --gray-700: #495057;
+    --gray-900: #212529;
+  }}
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: var(--gray-900);
+    background: var(--gray-50);
+    line-height: 1.6;
+  }}
+  .container {{ max-width: 960px; margin: 0 auto; padding: 0 24px; }}
+  .cover {{
+    background: linear-gradient(135deg, var(--primary) 0%, #2d2d6b 100%);
+    color: white;
+    padding: 80px 0 60px;
+    text-align: center;
+  }}
+  .cover h1 {{ font-size: 2.4rem; font-weight: 700; margin-bottom: 8px; }}
+  .cover .site {{ font-size: 1.3rem; color: var(--accent-light); margin-bottom: 32px; }}
+  .cover .score-ring {{
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 160px; height: 160px; border-radius: 50%;
+    border: 6px solid var(--accent); margin-bottom: 12px;
+  }}
+  .cover .score-ring .num {{ font-size: 3.2rem; font-weight: 800; color: var(--accent-light); }}
+  .cover .score-ring .den {{ font-size: 1.2rem; color: rgba(255,255,255,0.6); margin-left: 2px; }}
+  .cover .score-label {{ font-size: 1rem; color: rgba(255,255,255,0.7); margin-bottom: 30px; }}
+  .cover .meta {{ font-size: 0.85rem; color: rgba(255,255,255,0.55); line-height: 1.9; }}
+  .toc {{
+    background: white; border-bottom: 1px solid var(--gray-200); padding: 16px 0;
+    position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  }}
+  .toc-inner {{ display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }}
+  .toc a {{
+    display: inline-block; padding: 6px 14px; font-size: 0.78rem; font-weight: 500;
+    color: var(--gray-700); text-decoration: none; border-radius: 20px; white-space: nowrap;
+    border: 1px solid var(--gray-200);
+  }}
+  .toc a:hover {{ background: var(--primary); color: white; border-color: var(--primary); }}
+  .section {{
+    background: white; border-radius: 12px; margin: 24px 0; padding: 32px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }}
+  .section.page-break-before {{ break-before: page; }}
+  .section-header {{
+    display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none;
+  }}
+  .section-header h2 {{ font-size: 1.35rem; color: var(--primary); }}
+  .section-header .score-badge {{
+    font-size: 0.95rem; font-weight: 700; padding: 6px 16px; border-radius: 20px;
+    color: white; flex-shrink: 0;
+  }}
+  .score-green {{ background: var(--green); color: white; }}
+  .score-yellow {{ background: var(--yellow); color: var(--gray-900); }}
+  .score-orange {{ background: var(--orange); color: white; }}
+  .score-red {{ background: var(--red); color: white; }}
+  .section-header .chevron {{ font-size: 1.4rem; color: var(--gray-500); margin-left: 12px; transition: transform 0.3s; }}
+  .section.collapsed .section-body {{ display: none; }}
+  .section.collapsed .chevron {{ transform: rotate(-90deg); }}
+  .section-body {{ margin-top: 20px; }}
+  h3 {{ font-size: 1.05rem; color: var(--primary); margin: 22px 0 10px; padding-bottom: 6px; border-bottom: 2px solid var(--gray-100); }}
+  h3:first-child {{ margin-top: 0; }}
+  p {{ margin-bottom: 12px; color: var(--gray-700); font-size: 0.92rem; }}
+  strong {{ color: var(--gray-900); }}
+  table {{ width: 100%; border-collapse: collapse; margin: 14px 0 18px; font-size: 0.85rem; }}
+  th {{
+    background: var(--primary); color: white; padding: 10px 12px; text-align: left;
+    font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.3px;
+  }}
+  td {{ padding: 9px 12px; border-bottom: 1px solid var(--gray-200); color: var(--gray-700); }}
+  tr:nth-child(even) {{ background: var(--gray-50); }}
+  tr:hover {{ background: #eef0ff; }}
+  .issue {{ display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--gray-100); }}
+  .issue:last-child {{ border-bottom: none; }}
+  .issue-badge {{
+    flex-shrink: 0; font-size: 0.65rem; font-weight: 700; padding: 3px 8px; border-radius: 4px;
+    color: white; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px;
+  }}
+  .badge-critical {{ background: var(--red); }}
+  .badge-high {{ background: var(--orange); }}
+  .badge-medium {{ background: var(--yellow); color: var(--gray-900); }}
+  .badge-low {{ background: #95a5a6; }}
+  .issue-text {{ font-size: 0.88rem; color: var(--gray-700); line-height: 1.5; }}
+  ul.findings {{ list-style: none; padding: 0; }}
+  ul.findings li {{
+    padding: 6px 0 6px 20px; position: relative; font-size: 0.88rem; color: var(--gray-700);
+  }}
+  ul.findings li::before {{
+    content: "•"; position: absolute; left: 4px; color: var(--accent); font-weight: 700;
+  }}
+  .mini {{ font-size: 0.8rem; color: var(--gray-500); }}
+  .note {{
+    padding: 10px 12px;
+    background: #fff8e8;
+    border-left: 4px solid var(--accent);
+    color: #7d4b07;
+    border-radius: 6px;
+    margin: 8px 0 12px;
+    font-size: 0.86rem;
+  }}
+  .summary-grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 10px;
+    margin: 12px 0 8px;
+  }}
+  .summary-card {{
+    border: 1px solid var(--gray-200);
+    background: var(--gray-50);
+    border-radius: 8px;
+    padding: 10px;
+  }}
+  .summary-card span {{
+    display: block;
+    font-size: 0.72rem;
+    color: var(--gray-500);
+    text-transform: uppercase;
+    letter-spacing: 0.2px;
+  }}
+  .summary-card strong {{
+    display: block;
+    margin-top: 4px;
+    font-size: 1.02rem;
+    color: var(--gray-900);
+  }}
+  code {{
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 0.78rem;
+    background: #eef2f8;
+    border: 1px solid #dbe4ef;
+    border-radius: 4px;
+    padding: 1px 4px;
+  }}
+  .report-footer {{
+    text-align: center; font-size: 0.8rem; color: var(--gray-500); padding: 26px 0 40px;
+  }}
+  @media (max-width: 900px) {{
+    .cover {{ padding: 48px 0 38px; }}
+    .cover h1 {{ font-size: 1.8rem; }}
+    .section {{ padding: 22px; }}
+  }}
+  @media print {{
+    @page {{ size: A4; margin: 10mm; }}
+    body {{ background: white; }}
+    .container {{ max-width: none; padding: 0; }}
+    .cover {{
+      break-after: page;
+      page-break-after: always;
+      border-radius: 0;
+      margin: 0;
+      padding: 50px 0 36px;
+    }}
+    .toc {{
+      position: static;
+      box-shadow: none;
+      border: 1px solid var(--gray-200);
+      margin-bottom: 6mm;
+      break-after: page;
+      page-break-after: always;
+    }}
+    .toc-inner {{ display: block; column-count: 2; column-gap: 7mm; }}
+    .toc a {{
+      display: block;
+      border: none;
+      border-radius: 0;
+      padding: 2mm 0;
+      margin: 0;
+      color: var(--gray-900);
+      text-decoration: none;
+      font-size: 9.5pt;
+    }}
+    .section {{
+      break-inside: avoid-page;
+      page-break-inside: avoid;
+      margin: 0 0 6mm;
+      box-shadow: none;
+      border: 1px solid var(--gray-300);
+      border-radius: 0;
+    }}
+    .section.page-break-before {{
+      break-before: page;
+      page-break-before: always;
+    }}
+    .section-header,
+    h2,
+    h3 {{
+      break-after: avoid-page;
+      page-break-after: avoid;
+    }}
+    table,
+    thead,
+    tbody,
+    tr,
+    td,
+    th,
+    .issue,
+    ul.findings li {{
+      break-inside: avoid-page;
+      page-break-inside: avoid;
+    }}
+    .report-footer {{
+      margin-top: 6mm;
+      border-top: 1px solid var(--gray-200);
+      padding-top: 4mm;
+      padding-bottom: 0;
+    }}
+  }}
+</style>
+</head>
+<body>
+<div class="cover">
+  <div class="container">
+    <h1>SEO Audit Report</h1>
+    <div class="site">{escape(target_url)}</div>
+    <div class="score-ring"><span class="num">{escape(_fmt_number(total_score, 1))}</span><span class="den">/100</span></div>
+    <div class="score-label">SEO Health Score • Grade {escape(grade)} ({escape(band)})</div>
+    <div class="meta">
+      Audit Date: {escape(generated_at)}<br>
+      Business Type: {escape(business_label)} ({escape(_fmt_number(business_confidence, 1))}% confidence)<br>
+      Methodology: 6-specialist parallel SEO audit
+    </div>
+  </div>
+</div>
+
+<div class="toc">
+  <div class="container">
+    <div class="toc-inner">
+      <a href="#summary">Executive Summary</a>
+      <a href="#scores">Score Breakdown</a>
+      <a href="#issues">Top Issues</a>
+      <a href="#technical">Technical</a>
+      <a href="#content">Content</a>
+      <a href="#onpage">On-Page</a>
+      <a href="#schema">Schema</a>
+      <a href="#performance">Performance</a>
+      <a href="#ai">AI Readiness</a>
+      <a href="#specialist-data">Specialist Data</a>
+      <a href="#actions">Action Plan</a>
+      <a href="#projection">Projection</a>
+      <a href="#visual">Visual</a>
+      <a href="#orchestration">Specialists</a>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="section" id="summary">
+    <div class="section-header" onclick="toggleSection(this)">
+      <h2>Executive Summary</h2>
+      <span class="score-badge {badge_class(total_score)}">{escape(_fmt_number(total_score, 1))}/100</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <p>The site shows a strong baseline across crawlability, indexability, and structured data. Highest leverage opportunities are concentrated in content depth and image accessibility details.</p>
+      <div class="summary-grid">
+        <div class="summary-card"><span>SEO Health</span><strong>{escape(_fmt_number(total_score, 1))}/100</strong></div>
+        <div class="summary-card"><span>Pages Crawled</span><strong>{escape(_fmt_number(pages_total, 0))}</strong></div>
+        <div class="summary-card"><span>Metadata Completeness</span><strong>{escape(_fmt_number(metadata_completeness, 1))}%</strong></div>
+        <div class="summary-card"><span>Alt Coverage</span><strong>{escape(_fmt_number(alt_coverage, 1))}%</strong></div>
+        <div class="summary-card"><span>Critical + High Issues</span><strong>{issues_by_priority['Critical'] + issues_by_priority['High']}</strong></div>
+        <div class="summary-card"><span>Security Header Coverage</span><strong>{escape(_fmt_number(header_coverage, 1))}%</strong></div>
+      </div>
+      <table>
+        <tr><th>Signal</th><th>Value</th></tr>
+        <tr><td>Pages Crawled / Successful / HTML / Non-HTML</td><td>{escape(_fmt_number(pages_total, 0))} / {escape(_fmt_number(pages_successful, 0))} / {escape(_fmt_number(pages_html, 0))} / {escape(_fmt_number(pages_non_html, 0))}</td></tr>
+        <tr><td>Critical Issues</td><td>{issues_by_priority['Critical']}</td></tr>
+        <tr><td>High Issues</td><td>{issues_by_priority['High']}</td></tr>
+        <tr><td>Crawl Errors / Fetch Errors / Redirect Chains</td><td>{escape(_fmt_number(error_pages, 0))} / {escape(_fmt_number(fetch_errors, 0))} / {escape(_fmt_number(long_redirects, 0))}</td></tr>
+        <tr><td>Thin Pages / Weak Internal Link Pages</td><td>{escape(_fmt_number(thin_pages, 0))} / {escape(_fmt_number(weak_internal, 0))}</td></tr>
+        <tr><td>Schema Coverage</td><td>{escape(_fmt_number(schema_pages, 0))}/{escape(_fmt_number(pages_html, 0))} ({escape(_fmt_number(schema_coverage, 1))}%)</td></tr>
+        <tr><td>Image Alt Coverage</td><td>{escape(_fmt_number(total_images - missing_alt, 0))}/{escape(_fmt_number(total_images, 0))} ({escape(_fmt_number(alt_coverage, 1))}%)</td></tr>
+        <tr><td>Robots / Sitemap / llms.txt</td><td>{_bool_label(stats.get("robots_ok"))} / {_bool_label(stats.get("sitemap_ok"))} / {_bool_label(stats.get("llms_ok"))}</td></tr>
+        <tr><td>Missing Security Headers</td><td>{escape(', '.join(headers_missing) if headers_missing else 'None')}</td></tr>
+      </table>
+      <h3>What Works Well</h3>
+      <ul class="findings">{strengths_html}</ul>
+    </div>
+  </div>
+
+  <div class="section" id="scores">
+    <div class="section-header" onclick="toggleSection(this)">
+      <h2>Score Breakdown</h2>
+      <span class="score-badge {badge_class(total_score)}">{escape(_fmt_number(weighted_total, 1))}/100</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="note">{escape(measurement_status)}</div>
+      <table>
+        <tr><th>Category</th><th>Score</th><th>Weight</th><th>Weighted</th></tr>
+        {''.join(score_rows)}
+        <tr><th>Total</th><th>{escape(_fmt_number(total_score, 1))}/100</th><th>100%</th><th>{escape(_fmt_number(weighted_total, 1))}</th></tr>
+      </table>
+      <table>
+        <tr><th>Priority Tier</th><th>Issue Count</th></tr>
+        <tr><td>Critical</td><td>{issues_by_priority['Critical']}</td></tr>
+        <tr><td>High</td><td>{issues_by_priority['High']}</td></tr>
+        <tr><td>Medium</td><td>{issues_by_priority['Medium']}</td></tr>
+        <tr><td>Low</td><td>{issues_by_priority['Low']}</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="section page-break-before" id="issues">
+    <div class="section-header" onclick="toggleSection(this)">
+      <h2>Top Issues and Quick Wins</h2>
+      <span class="score-badge {badge_class(scores.get('content'))}">{issues_by_priority['Critical'] + issues_by_priority['High']} high-risk</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <h3>Top 5 Critical Issues</h3>
+      {issue_items}
+      <h3>Top 5 Quick Wins</h3>
+      <p class="mini">High-lift/low-effort quick wins identified: {escape(_fmt_number(quick_win_high_lift, 0))}</p>
+      <ul class="findings">{quick_win_items}</ul>
+      <h3>Issue Evidence Matrix</h3>
+      <table>
+        <tr><th>Priority</th><th>Category</th><th>Issue</th><th>Evidence URLs</th><th>Effort</th><th>Expected Lift</th></tr>
+        {top_issue_rows}
+      </table>
+      <h3>Example URLs from Crawl</h3>
+      <table>
+        <tr><th>Issue Type</th><th>Example URLs</th></tr>
+        <tr><td>Missing titles</td><td>{render_example_urls('missing_title')}</td></tr>
+        <tr><td>Missing meta descriptions</td><td>{render_example_urls('missing_meta')}</td></tr>
+        <tr><td>Thin content pages</td><td>{render_example_urls('thin_content')}</td></tr>
+        <tr><td>Noindex pages</td><td>{render_example_urls('noindex')}</td></tr>
+        <tr><td>Missing schema pages</td><td>{render_example_urls('missing_schema')}</td></tr>
+        <tr><td>Missing alt text pages</td><td>{render_example_urls('alt_missing')}</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="section page-break-before" id="technical">
+    <div class="section-header" onclick="toggleSection(this)">
+      <h2>Technical SEO</h2>
+      <span class="score-badge {badge_class(scores.get('technical'))}">{escape(_fmt_number(scores.get('technical'), 1))}/100</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <table>
+        <tr><th>Technical Signal</th><th>Value</th></tr>
+        {technical_snapshot_rows}
+      </table>
+      <ul class="findings">{category_findings('technical')}</ul>
+      <p class="mini">Critical/high technical issues: {escape(_fmt_number(len([i for i in sorted_issues if str(i.get('category') or '') in category_sets['technical'] and str(i.get('priority') or '').title() in ('Critical', 'High')]), 0))}</p>
+    </div>
+  </div>
+
+  <div class="section page-break-before" id="content">
+    <div class="section-header" onclick="toggleSection(this)">
+      <h2>Content Quality and E-E-A-T</h2>
+      <span class="score-badge {badge_class(scores.get('content'))}">{escape(_fmt_number(scores.get('content'), 1))}/100</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <table>
+        <tr><th>Content Signal</th><th>Value</th></tr>
+        {content_snapshot_rows}
+      </table>
+      <h3>E-E-A-T Factor Scores</h3>
+      <table>
+        <tr><th>Dimension</th><th>Score</th></tr>
+        {eeat_rows}
+      </table>
+      <ul class="findings">{category_findings('content')}</ul>
+    </div>
+  </div>
+
+  <div class="section page-break-before" id="onpage">
+    <div class="section-header" onclick="toggleSection(this)">
+      <h2>On-Page SEO</h2>
+      <span class="score-badge {badge_class(scores.get('onpage'))}">{escape(_fmt_number(scores.get('onpage'), 1))}/100</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <table>
+        <tr><th>On-Page Signal</th><th>Value</th></tr>
+        {onpage_summary_rows}
+      </table>
+      <h3>Examples</h3>
+      <table>
+        <tr><th>Type</th><th>Sample URLs</th></tr>
+        <tr><td>Missing title tag</td><td>{render_example_urls('missing_title')}</td></tr>
+        <tr><td>Missing meta description</td><td>{render_example_urls('missing_meta')}</td></tr>
+      </table>
+      <ul class="findings">{category_findings('onpage')}</ul>
+    </div>
+  </div>
+
+  <div class="section page-break-before" id="schema">
+    <div class="section-header" onclick="toggleSection(this)">
+      <h2>Schema and Structured Data</h2>
+      <span class="score-badge {badge_class(scores.get('schema'))}">{escape(_fmt_number(scores.get('schema'), 1))}/100</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <table>
+        <tr><th>Schema Signal</th><th>Value</th></tr>
+        {schema_rows}
+        <tr><td>Schema type coverage</td><td>{escape(schema_types_text)}</td></tr>
+        <tr><td>Pages with schema</td><td>{escape(_fmt_number(schema_pages, 0))}/{escape(_fmt_number(pages_html, 0))} ({escape(_fmt_number(schema_coverage, 1))}%)</td></tr>
+      </table>
+      <h3>Sitemap Validation Snapshot</h3>
+      <table>
+        <tr><th>Sitemap Signal</th><th>Value</th></tr>
+        {sitemap_rows}
+      </table>
+      <ul class="findings">{category_findings('schema')}</ul>
+    </div>
+  </div>
+
+  <div class="section page-break-before" id="performance">
+    <div class="section-header" onclick="toggleSection(this)">
+      <h2>Performance and Core Web Vitals</h2>
+      <span class="score-badge {badge_class(scores.get('performance'))}">{escape(_fmt_number(scores.get('performance'), 1))}/100</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <p>Performance source: <strong>{escape(str(stats.get("performance_source", "proxy")))}</strong> | CWV status: <strong>{escape(str((stats.get("cwv") or {}).get("status", "n/a")))}</strong></p>
+      <table>
+        <tr><th>Metric</th><th>Value</th></tr>
+        <tr><td>Median response (ms)</td><td>{escape(_fmt_number(stats.get("median_response_ms"), 1))}</td></tr>
+        <tr><td>p90 response (ms)</td><td>{escape(_fmt_number(stats.get("p90_response_ms"), 1))}</td></tr>
+        <tr><td>CWV composite score</td><td>{escape(_fmt_number(((stats.get("cwv") or {}).get("composite_score")), 1))}</td></tr>
+        <tr><td>CWV lab score</td><td>{escape(_fmt_number(((stats.get("cwv") or {}).get("lab_score")), 1))}</td></tr>
+        <tr><td>Field LCP p75 (ms)</td><td>{escape(_fmt_number((((stats.get("cwv") or {}).get("mobile") or {}).get("field_lcp_ms")), 1))}</td></tr>
+        <tr><td>Field INP p75 (ms)</td><td>{escape(_fmt_number((((stats.get("cwv") or {}).get("mobile") or {}).get("field_inp_ms")), 1))}</td></tr>
+        <tr><td>Field CLS p75</td><td>{escape(_fmt_number((((stats.get("cwv") or {}).get("mobile") or {}).get("field_cls")), 3))}</td></tr>
+        <tr><td>Specialist mobile status</td><td>{escape(str(perf_mobile_status))}</td></tr>
+        <tr><td>Specialist desktop status</td><td>{escape(str(perf_desktop_status))}</td></tr>
+      </table>
+      <p class="mini">Mobile detail: {escape(perf_mobile_reason or 'n/a')}</p>
+      <p class="mini">Desktop detail: {escape(perf_desktop_reason or 'n/a')}</p>
+      <ul class="findings">{category_findings('performance')}</ul>
+    </div>
+  </div>
+
+  <div class="section page-break-before" id="ai">
+    <div class="section-header" onclick="toggleSection(this)">
+      <h2>AI Search Readiness</h2>
+      <span class="score-badge {badge_class(scores.get('ai_readiness'))}">{escape(_fmt_number(scores.get('ai_readiness'), 1))}/100</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <table>
+        <tr><th>AI Readiness Signal</th><th>Value</th></tr>
+        <tr><td>llms.txt available</td><td>{_bool_label(stats.get('llms_ok'))}</td></tr>
+        <tr><td>About/Contact trust pages present</td><td>{_bool_label(stats.get('about_or_contact_links'))}</td></tr>
+        <tr><td>Citation readiness</td><td>{escape(_fmt_number(content_summary.get('citation_readiness'), 1))}/100</td></tr>
+        <tr><td>Thin content share</td><td>{escape(_fmt_number(thin_share, 1))}%</td></tr>
+      </table>
+      <h3>AI Crawler Access Policy</h3>
+      <table>
+        <tr><th>Crawler</th><th>Policy</th></tr>
+        {ai_policy_rows}
+      </table>
+      <ul class="findings">{category_findings('ai_readiness')}</ul>
+    </div>
+  </div>
+
+  <div class="section page-break-before" id="specialist-data">
+    <div class="section-header" onclick="toggleSection(this)">
+      <h2>Specialist Data Pack</h2>
+      <span class="score-badge {badge_class(total_score)}">Deep Data</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <h3>Track Metric Snapshot</h3>
+      <table>
+        <tr><th>Track</th><th>Status</th><th>Score Hint</th><th>Issue Count</th><th>Priority Mix</th></tr>
+        {track_metric_rows}
+      </table>
+
+      <h3>E-E-A-T Factor Scores</h3>
+      <table>
+        <tr><th>Dimension</th><th>Score</th></tr>
+        {eeat_rows}
+      </table>
+
+      <h3>Schema Validation Snapshot</h3>
+      <table>
+        <tr><th>Signal</th><th>Value</th></tr>
+        {schema_rows}
+      </table>
+
+      <h3>Specialist Issue Extracts</h3>
+      {specialist_issue_html}
+    </div>
+  </div>
+
+  <div class="section page-break-before" id="actions">
+    <div class="section-header" onclick="toggleSection(this)">
+      <h2>Prioritized Action Plan</h2>
+      <span class="score-badge {badge_class(scores.get('content'))}">{issues_by_priority['Critical'] + issues_by_priority['High']} urgent</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <table>
+        <tr><th>Priority</th><th>Item Count</th><th>Expected Impact</th><th>Timeline</th></tr>
+        {action_plan_rows}
+      </table>
+      <h3>Critical (Immediate)</h3>
+      <ul class="findings">{critical_bullets}</ul>
+      <h3>High (Within 1 Week)</h3>
+      <ul class="findings">{high_bullets}</ul>
+      <h3>Medium (Within 1 Month)</h3>
+      <ul class="findings">{medium_bullets}</ul>
+    </div>
+  </div>
+
+  <div class="section page-break-before" id="projection">
+    <div class="section-header" onclick="toggleSection(this)">
+      <h2>Score Projection and Timeline</h2>
+      <span class="score-badge {badge_class(total_score)}">Roadmap</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <p class="note">Projected upside after full remediation: +{escape(_fmt_number(projection_gain, 1))} points from current baseline.</p>
+      <table>
+        <tr><th>Milestone</th><th>Projected Score</th></tr>
+        {projection_rows}
+      </table>
+      <h3>Implementation Timeline</h3>
+      <ul class="findings">{timeline_html}</ul>
+    </div>
+  </div>
+
+  <div class="section page-break-before" id="visual">
+    <div class="section-header" onclick="toggleSection(this)">
+      <h2>Visual and Mobile Checks</h2>
+      <span class="score-badge {badge_class(scores.get('onpage'))}">{escape(_fmt_number(scores.get('onpage'), 1))}/100</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <ul class="findings">{visual_items}</ul>
+      <h3>Section Capture Metrics</h3>
+      <table>
+        <tr><th>Section</th><th>Words</th><th>CTAs</th><th>Forms</th><th>Capture Reason</th></tr>
+        {visual_section_rows}
+      </table>
+      <h3>Viewport Screenshot Paths</h3>
+      <table>
+        <tr><th>Path</th></tr>
+        {visual_shot_rows}
+      </table>
+    </div>
+  </div>
+
+  <div class="section page-break-before" id="orchestration">
+    <div class="section-header" onclick="toggleSection(this)">
+      <h2>Specialist Execution</h2>
+      <span class="score-badge {badge_class(total_score)}">{escape(str((orchestration or {}).get('success_count', 0)))}/{escape(str((orchestration or {}).get('total_tracks', 0)))} ok</span>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <table>
+        <tr><th>Track</th><th>Status</th><th>Duration</th><th>Summary Metrics</th></tr>
+        {orchestration_rows}
+      </table>
+    </div>
+  </div>
+
+  <div class="report-footer">
+    <p>Generated by Codex SEO | {escape(generated_at[:10])}</p>
+  </div>
+</div>
+
+<script>
+function toggleSection(header) {{
+  header.closest('.section').classList.toggle('collapsed');
+}}
+</script>
+</body>
+</html>
+"""
+
+
 def write_html_and_pdf_reports(
     output_dir: Path,
     html_content: str,
@@ -3573,6 +5112,8 @@ def write_reports(
     issues: list[dict[str, Any]],
     visual: dict[str, Any],
     orchestration: dict[str, Any] | None = None,
+    report_profile: str = "authentic",
+    charts_mode: str = "auto",
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     full_report = output_dir / "FULL-AUDIT-REPORT.md"
@@ -3616,6 +5157,20 @@ def write_reports(
         )
         if quick_wins
         else "- No quick wins detected in this sample."
+    )
+    strength_lines = "\n".join(f"- {item}" for item in _derive_strengths(stats, scores, issues, limit=6))
+    projection = _projected_score_series(total_score, issues)
+    projection_gain = round(float(projection[4]) - float(projection[0]), 1)
+    projection_table = "\n".join(
+        [
+            "| Milestone | Projected Score |",
+            "|---|---:|",
+            f"| Current | {projection[0]} |",
+            f"| After Critical Fixes | {projection[1]} |",
+            f"| After High Fixes | {projection[2]} |",
+            f"| After Medium Fixes | {projection[3]} |",
+            f"| Full Optimization | {projection[4]} |",
+        ]
     )
 
     score_lines = []
@@ -3735,11 +5290,21 @@ def write_reports(
 
 {quick_win_lines}
 
+### What Works Well
+
+{strength_lines}
+
 ## Category Scores
 
 | Category | Score | Status |
 |---|---:|---|
 {score_table}
+
+## Score Projection After Fixes
+
+- Projected upside after full remediation: **+{projection_gain} points** from current baseline.
+
+{projection_table}
 
 ## Top Findings
 
@@ -3965,34 +5530,59 @@ AI readiness scored **{scores['ai_readiness']}**. Root-level AI control files (`
     full_report.write_text(full_content, encoding="utf-8")
     action_plan.write_text("\n".join(plan_lines).strip() + "\n", encoding="utf-8")
 
-    chart_pack = generate_reference_charts(
-        output_dir=output_dir,
-        target_url=target_url,
-        total_score=total_score,
-        scores=scores,
-        stats=stats,
-        issues=issues,
-    )
+    normalized_profile = normalize_report_profile(report_profile)
+    charts_requested = charts_mode == "on" or (charts_mode == "auto" and normalized_profile != "authentic")
+    chart_pack: dict[str, Any] = {
+        "enabled": False,
+        "reason": "Charts disabled for selected report profile.",
+        "figures": [],
+    }
+    if charts_requested:
+        chart_pack = generate_reference_charts(
+            output_dir=output_dir,
+            target_url=target_url,
+            total_score=total_score,
+            scores=scores,
+            stats=stats,
+            issues=issues,
+        )
     chart_figures = chart_pack.get("figures") if isinstance(chart_pack, dict) else []
 
-    html_content = build_html_report(
-        target_url=target_url,
-        generated_at=generated_at,
-        total_score=total_score,
-        grade=grade,
-        band=band,
-        business_label=business_label,
-        business_confidence=business_confidence,
-        scores=scores,
-        stats=stats,
-        issues=issues,
-        quick_wins=quick_wins,
-        visual=visual,
-        screenshot_paths=screenshot_rel_paths,
-        section_insights=section_rel_data,
-        chart_figures=chart_figures,
-        orchestration=orchestration,
-    )
+    if normalized_profile == "authentic":
+        html_content = build_html_report_authentic(
+            target_url=target_url,
+            generated_at=generated_at,
+            total_score=total_score,
+            grade=grade,
+            band=band,
+            business_label=business_label,
+            business_confidence=business_confidence,
+            scores=scores,
+            stats=stats,
+            issues=issues,
+            quick_wins=quick_wins,
+            visual=visual,
+            orchestration=orchestration,
+        )
+    else:
+        html_content = build_html_report(
+            target_url=target_url,
+            generated_at=generated_at,
+            total_score=total_score,
+            grade=grade,
+            band=band,
+            business_label=business_label,
+            business_confidence=business_confidence,
+            scores=scores,
+            stats=stats,
+            issues=issues,
+            quick_wins=quick_wins,
+            visual=visual,
+            screenshot_paths=screenshot_rel_paths,
+            section_insights=section_rel_data,
+            chart_figures=chart_figures,
+            orchestration=orchestration,
+        )
     rendered_outputs = write_html_and_pdf_reports(output_dir=output_dir, html_content=html_content)
 
     artifacts = {
@@ -4008,6 +5598,7 @@ AI readiness scored **{scores['ai_readiness']}**. Root-level AI control files (`
         "charts_reason": str(chart_pack.get("reason") or "") if isinstance(chart_pack, dict) else "",
         "chart_figures": chart_figures if isinstance(chart_figures, list) else [],
         "charts_dir": (str(output_dir / "charts") if bool(chart_pack.get("enabled")) else None) if isinstance(chart_pack, dict) else None,
+        "report_profile": normalized_profile,
         "orchestration_summary": (
             str(output_dir / "ORCHESTRATION-SUMMARY.json")
             if (output_dir / "ORCHESTRATION-SUMMARY.json").exists()
@@ -4067,8 +5658,24 @@ def main() -> int:
         default=os.getenv("PAGESPEED_API_KEY", ""),
         help="Optional Google PageSpeed API key (or set PAGESPEED_API_KEY).",
     )
+    parser.add_argument(
+        "--report-profile",
+        default="authentic",
+        help="Report presentation profile (authentic or dossier).",
+    )
+    parser.add_argument(
+        "--charts",
+        choices=["auto", "on", "off"],
+        default="auto",
+        help="Chart rendering mode (auto=off for authentic, on for dossier).",
+    )
     parser.add_argument("--output-dir", default="seo-audit-output", help="Output directory")
     args = parser.parse_args()
+    try:
+        report_profile = normalize_report_profile(args.report_profile)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        return 2
 
     if args.max_pages < 1:
         print("Error: --max-pages must be >= 1")
@@ -4105,7 +5712,9 @@ def main() -> int:
     )
     print(f"CWV status: {cwv_data.get('status')} ({cwv_data.get('source', args.cwv_source)})")
     if cwv_data.get("reason"):
-        print(f"CWV note: {cwv_data.get('reason')}")
+        show_cwv_note = args.cwv_source == "pagespeed" or bool(str(args.pagespeed_key or "").strip())
+        if show_cwv_note:
+            print(f"CWV note: {_summarize_pagespeed_reason(cwv_data.get('reason'))}")
 
     print("Scoring...")
     scores, stats, issues = compute_scores(
@@ -4127,13 +5736,34 @@ def main() -> int:
             output_dir=output_dir,
             timeout=args.timeout,
             visual_mode=args.visual,
+            pagespeed_key=str(args.pagespeed_key or "").strip(),
         )
         print(
             f"Specialist tracks: {orchestration.get('success_count', 0)}/{orchestration.get('total_tracks', 0)} succeeded"
         )
+        if report_profile == "authentic":
+            scores, stats, issues = synthesize_from_orchestration(
+                target_url=target_url,
+                scores=scores,
+                stats=stats,
+                issues=issues,
+                orchestration=orchestration,
+            )
+            print("Score synthesis: specialist-driven calibration enabled")
 
     print("Writing reports...")
-    artifacts = write_reports(output_dir, target_url, pages, scores, stats, issues, visual, orchestration=orchestration)
+    artifacts = write_reports(
+        output_dir,
+        target_url,
+        pages,
+        scores,
+        stats,
+        issues,
+        visual,
+        orchestration=orchestration,
+        report_profile=report_profile,
+        charts_mode=args.charts,
+    )
     health_score, not_measured = aggregate_health_score(scores)
 
     print(f"Done. Health score: {health_score}/100")

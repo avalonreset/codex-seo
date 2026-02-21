@@ -136,21 +136,14 @@ INDUSTRY_PROFILES = {
     },
 }
 
-COMPETITOR_STRENGTHS = [
-    "Strong topical architecture in commercial intent clusters",
-    "Consistent publishing cadence and freshness updates",
-    "Clear internal linking from informational to transactional pages",
-]
-COMPETITOR_GAPS = [
-    "Thin differentiation on high-intent pages",
-    "Inconsistent proof and trust signals in key templates",
-    "Limited depth in intent-specific long-tail coverage",
-]
-COUNTER_MOVES = [
-    "Build deeper pillar pages with clearer conversion pathways",
-    "Add first-party proof and stronger schema coverage",
-    "Publish intent-specific supporting assets on a fixed cadence",
-]
+INDUSTRY_COMPETITOR_FOCUS = {
+    "saas": "comparison, alternatives, and integration pages",
+    "local-service": "city/service landing pages and local proof content",
+    "ecommerce": "category, product, and buyer-guide content",
+    "publisher": "topic hubs, freshness cadence, and author trust pages",
+    "agency": "service pages, case studies, and expertise clusters",
+    "generic": "service and resource hub coverage",
+}
 
 RISK_LINES = [
     "| High | Thin or duplicated templates on scaled pages | Enforce content QA and uniqueness gates before publishing. |",
@@ -408,6 +401,56 @@ def build_kpis(config: dict[str, Any]) -> list[tuple[str, str, str, str, str]]:
     ]
 
 
+def host_from_url(raw: str | None) -> str:
+    if not raw:
+        return ""
+    token = raw.strip()
+    parsed = urlparse(token if "://" in token else f"https://{token}")
+    return (parsed.netloc or "").replace("www.", "").lower()
+
+
+def competitor_insight(comp: dict[str, str], config: dict[str, Any]) -> dict[str, str]:
+    source = comp["url"] or "Manual discovery required"
+    comp_host = host_from_url(comp.get("url"))
+    own_host = host_from_url(config.get("website"))
+    focus = INDUSTRY_COMPETITOR_FOCUS.get(config["industry"], INDUSTRY_COMPETITOR_FOCUS["generic"])
+    schema_focus = config["profile"]["schema"].split(",")[0].strip()
+
+    if not comp_host:
+        return {
+            "content_signal": "No competitor URL supplied; content posture cannot be validated yet.",
+            "schema_signal": "Schema coverage unknown until representative URLs are collected.",
+            "technical_signal": "CWV/indexability posture unknown until crawl input is provided.",
+            "gap": "Discovery gap: missing source URLs blocks direct benchmarking.",
+            "counter_move": "Collect top ranking URLs for this competitor and rerun competitor mapping.",
+            "source": source,
+        }
+
+    overlap_note = (
+        "Potential direct SERP overlap with your domain."
+        if own_host and (comp_host.endswith(own_host) or own_host.endswith(comp_host))
+        else "Competes in adjacent SERP clusters; validate overlap with ranking exports."
+    )
+    return {
+        "content_signal": f"Use `{comp_host}` as baseline for {focus}. {overlap_note}",
+        "schema_signal": f"Validate `{schema_focus}` coverage and completeness on key templates for `{comp_host}`.",
+        "technical_signal": f"Benchmark `{comp_host}` crawl/index hygiene, canonical consistency, and CWV pass rates.",
+        "gap": "Likely differentiation gap on proof depth, freshness cadence, or intent-specific depth.",
+        "counter_move": "Prioritize richer first-party proof and stronger intent-specific assets for contested queries.",
+        "source": source,
+    }
+
+
+def build_success_criteria(config: dict[str, Any]) -> list[str]:
+    return [
+        "Clear measurable goals: each strategic goal is mapped to 3/6/12-month KPI targets.",
+        "Resource requirements: phase owners are assigned across SEO, content, engineering, and leadership.",
+        "Dependencies identified: analytics baseline, crawl/index checks, and template governance are mandatory inputs.",
+        "Risk mitigation: monthly QA checkpoints and roadmap risk controls are defined before scale decisions.",
+        f"Time-bound execution: all phases align to a {config['timeline_months']}-month planning horizon.",
+    ]
+
+
 def write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content.rstrip() + "\n", encoding="utf-8")
@@ -426,6 +469,7 @@ def main() -> int:
 
     cadence_slots = {"weekly": (12, 7), "biweekly": (6, 14), "monthly": (3, 30)}[config["cadence"]]
     kpi_rows = build_kpis(config)
+    success_criteria = build_success_criteria(config)
     output_dir = Path(args.output_dir).resolve()
 
     strategy = [
@@ -453,24 +497,37 @@ def main() -> int:
         "- Weekly execution + indexation checks",
         "- Monthly KPI review and reprioritization",
         "- Quarterly architecture and taxonomy refresh",
+        "",
+        "## Success Criteria",
+        "",
+        *[f"- {item}" for item in success_criteria],
+        "",
+        "### Phase Exit Checks",
+        "",
+        "| Phase | Exit Check |",
+        "|---|---|",
+        "| Foundation | Baseline KPIs captured, priority technical blockers resolved, schema baseline deployed. |",
+        "| Expansion | Initial content clusters published with QA and internal-linking controls. |",
+        "| Scale | Winning clusters expanded with measurable ranking and conversion movement. |",
+        "| Authority | Freshness and governance loops operationalized with quarterly reviews. |",
     ]
     write(output_dir / "SEO-STRATEGY.md", "\n".join(strategy))
 
     competitor_rows = []
-    for i, comp in enumerate(config["competitors"]):
+    for comp in config["competitors"]:
+        insight = competitor_insight(comp, config)
         competitor_rows.append(
-            f"| {comp['name']} | {comp['url'] or 'Manual discovery required'} | "
-            f"{COMPETITOR_STRENGTHS[i % len(COMPETITOR_STRENGTHS)]} | "
-            f"{COMPETITOR_GAPS[i % len(COMPETITOR_GAPS)]} | "
-            f"{COUNTER_MOVES[i % len(COUNTER_MOVES)]} |"
+            f"| {comp['name']} | {insight['source']} | "
+            f"{insight['content_signal']} | {insight['schema_signal']} | {insight['technical_signal']} | "
+            f"{insight['gap']} | {insight['counter_move']} |"
         )
     competitor_md = [
         "# Competitor Analysis",
         "",
         "> Planning assumptions only. Validate claims before publishing.",
         "",
-        "| Competitor | Source | Likely Strength | Potential Gap | Counter-Move |",
-        "|---|---|---|---|---|",
+        "| Competitor | Source | Content Strategy Signal | Schema Signal | Technical Signal | Potential Gap | Counter-Move |",
+        "|---|---|---|---|---|---|---|",
         *competitor_rows,
         "",
         "## Gap Themes by Pillar",
@@ -572,6 +629,7 @@ def main() -> int:
         "template_asset": template_path.as_posix(),
         "readiness_score": min(100, score),
         "competitor_count": len(config["competitors"]),
+        "success_criteria_count": len(success_criteria),
         "content_pillar_count": len(config["pillars"]),
         "calendar_entries": len(entries),
         "outputs": {

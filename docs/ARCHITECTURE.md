@@ -5,7 +5,7 @@
 Codex SEO uses a modular skill architecture:
 
 - `seo/` is the orchestrator skill (routing + shared references)
-- `skills/seo-*` contains 12 specialized skills
+- `skills/seo-*` contains task skills plus audit specialist runners (including `seo-performance` and `seo-visual`)
 - each skill has a deterministic Python runner in `skills/*/scripts/`
 - optional specialist agent profiles live in `agents/`
 
@@ -31,6 +31,8 @@ codex-seo/
 │   ├── seo-images/
 │   ├── seo-sitemap/
 │   ├── seo-geo/
+│   ├── seo-performance/
+│   ├── seo-visual/
 │   ├── seo-plan/
 │   ├── seo-programmatic/
 │   ├── seo-competitor-pages/
@@ -74,7 +76,9 @@ Reference docs under `seo/references/` and `skills/*/assets/` provide static SEO
 1. User asks for an SEO task in natural language.
 2. Codex selects the relevant skill by intent.
 3. Skill workflow executes with guardrails.
-4. Runner scripts are used where deterministic evidence is needed.
+4. For `/seo audit`, Codex should prefer parallel `spawn_agent` specialist execution.
+5. Multi-agent prerequisite in Codex chat: run `/experimental` and enable **Multi-agent**.
+6. Runner scripts are used when deterministic local/CI output is explicitly requested.
 
 ### Runner Mode (Direct CLI)
 

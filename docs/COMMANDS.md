@@ -7,6 +7,18 @@ Codex SEO supports two execution modes:
 1. Skill-driven mode in Codex (natural-language request, Codex routes to the right skill)
 2. Deterministic runner mode (direct Python command for repeatable local/CI output)
 
+For `/seo audit` in Codex chat, multi-agent orchestration (`spawn_agent` + `wait`) is the default path.
+Use the runner when you explicitly need deterministic CLI artifacts.
+
+### Codex Chat Prerequisite
+
+To get authentic parallel audit delegation in Codex chat:
+
+1. Run `/experimental`
+2. Enable **Multi-agent**
+
+If Multi-agent is OFF, chat execution may run in a reduced/non-parallel path. CLI runners are unaffected.
+
 ## Skill Routing Examples
 
 Use prompts like:
@@ -54,6 +66,18 @@ python skills/seo-schema/scripts/run_schema.py generate --template article --pag
 
 ```bash
 python skills/seo-geo/scripts/run_geo_analysis.py --url https://example.com/post --output-dir out/geo
+```
+
+### Performance Specialist (Audit Track)
+
+```bash
+python skills/seo-performance/scripts/run_performance_audit.py --url https://example.com --output-dir out/performance
+```
+
+### Visual Specialist (Audit Track)
+
+```bash
+python skills/seo-visual/scripts/run_visual_audit.py --url https://example.com --output-dir out/visual
 ```
 
 ### Image SEO Audit
@@ -106,6 +130,8 @@ python skills/seo-plan/scripts/run_plan.py --industry saas --business-name "Acme
 | `seo-schema` | `skills/seo-schema/scripts/run_schema.py` |
 | `seo-geo` | `skills/seo-geo/scripts/run_geo_analysis.py` |
 | `seo-images` | `skills/seo-images/scripts/run_image_audit.py` |
+| `seo-performance` | `skills/seo-performance/scripts/run_performance_audit.py` |
+| `seo-visual` | `skills/seo-visual/scripts/run_visual_audit.py` |
 | `seo-sitemap` | `skills/seo-sitemap/scripts/run_sitemap.py` |
 | `seo-hreflang` | `skills/seo-hreflang/scripts/run_hreflang.py` |
 | `seo-programmatic` | `skills/seo-programmatic/scripts/run_programmatic.py` |
