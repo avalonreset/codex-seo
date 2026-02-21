@@ -45,6 +45,10 @@ Audit specialist agents:
 - `seo-performance`
 - `seo-visual`
 
+Shipped audit specialist runner skills:
+- `skills/seo-performance`
+- `skills/seo-visual`
+
 ## Codex-Specific Adaptation
 
 The only intentional behavioral adaptation for audits is execution mapping:
@@ -113,7 +117,7 @@ Use normal Codex prompts, for example:
 Expected audit behavior:
 1. fetches core pages
 2. delegates to specialist agents in parallel (when Codex multi-agent is enabled)
-3. merges findings into `FULL-AUDIT-REPORT.md` and `ACTION-PLAN.md`
+3. merges findings into `FULL-AUDIT-REPORT.md` and `ACTION-PLAN.md` (plus HTML/PDF artifacts in runner mode)
 
 ## Optional CLI Runners
 
@@ -138,6 +142,7 @@ schema/templates.json           # Schema templates
 ## Documentation
 
 - [Installation Guide](docs/INSTALLATION.md)
+- [Release Notes v1.4.0](docs/RELEASE-NOTES-v1.4.0.md)
 - [Workflow Reference](docs/COMMANDS.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [MCP Integration](docs/MCP-INTEGRATION.md)
