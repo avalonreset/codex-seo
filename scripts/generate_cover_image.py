@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the Codex SEO repository cover image."""
+"""Generate a terminal-style banner for Codex SEO."""
 
 from __future__ import annotations
 
@@ -11,134 +11,186 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 WIDTH = 1792
 HEIGHT = 598
 
+NEON = (96, 255, 178, 255)
+NEON_SOFT = (124, 255, 206, 255)
+TEXT = (212, 255, 232, 255)
+PANEL = (3, 10, 16, 205)
+BORDER = (58, 190, 136, 200)
 
-def load_font(size: int, mono: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    font_candidates = []
+
+def load_font(size: int, *, mono: bool = False, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    fonts: list[str] = []
     if mono:
-        font_candidates.extend(
+        if bold:
+            fonts.extend(
+                [
+                    "C:/Windows/Fonts/consolab.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+                ]
+            )
+        fonts.extend(
             [
                 "C:/Windows/Fonts/consola.ttf",
-                "C:/Windows/Fonts/consolab.ttf",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
             ]
         )
     else:
-        font_candidates.extend(
+        if bold:
+            fonts.extend(
+                [
+                    "C:/Windows/Fonts/segoeuib.ttf",
+                    "C:/Windows/Fonts/arialbd.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                ]
+            )
+        fonts.extend(
             [
-                "C:/Windows/Fonts/segoeuib.ttf",
                 "C:/Windows/Fonts/segoeui.ttf",
-                "C:/Windows/Fonts/arialbd.ttf",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             ]
         )
 
-    for candidate in font_candidates:
+    for f in fonts:
         try:
-            return ImageFont.truetype(candidate, size)
+            return ImageFont.truetype(f, size=size)
         except OSError:
             continue
     return ImageFont.load_default()
 
 
-def make_gradient() -> Image.Image:
-    img = Image.new("RGB", (WIDTH, HEIGHT), "#090f16")
+def text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> int:
+    box = draw.textbbox((0, 0), text, font=font)
+    return box[2] - box[0]
+
+
+def fit_text(draw: ImageDraw.ImageDraw, text: str, max_w: int, *, mono: bool = True, bold: bool = False, start_size: int = 32) -> tuple[str, ImageFont.ImageFont]:
+    for size in range(start_size, 11, -1):
+        font = load_font(size, mono=mono, bold=bold)
+        if text_width(draw, text, font) <= max_w:
+            return text, font
+    # Hard clamp with ellipsis if needed
+    font = load_font(12, mono=mono, bold=bold)
+    t = text
+    while t and text_width(draw, t + "...", font) > max_w:
+        t = t[:-1]
+    return (t + "..." if t else "..."), font
+
+
+def clamp_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, max_w: int) -> str:
+    if text_width(draw, text, font) <= max_w:
+        return text
+    t = text
+    while t and text_width(draw, t + "...", font) > max_w:
+        t = t[:-1]
+    return (t + "...") if t else "..."
+
+
+def make_background() -> Image.Image:
+    img = Image.new("RGB", (WIDTH, HEIGHT), (2, 8, 14))
     px = img.load()
     for y in range(HEIGHT):
         for x in range(WIDTH):
             fx = x / WIDTH
             fy = y / HEIGHT
-            r = int(8 + 10 * fx + 6 * fy)
-            g = int(14 + 20 * fx + 6 * (1 - fy))
-            b = int(24 + 26 * (1 - fx) + 8 * fy)
+            r = int(2 + 8 * fx)
+            g = int(8 + 28 * fx + 10 * (1 - fy))
+            b = int(12 + 18 * fy + 8 * (1 - fx))
             px[x, y] = (r, g, b)
-    return img
+    return img.convert("RGBA")
 
 
-def draw_glow(base: Image.Image, center: tuple[int, int], radius: int, color: tuple[int, int, int, int]) -> None:
+def add_scanlines(img: Image.Image) -> None:
     overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
-    x, y = center
-    draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=color)
+    d = ImageDraw.Draw(overlay)
+    for y in range(0, HEIGHT, 3):
+        d.line((0, y, WIDTH, y), fill=(0, 0, 0, 24), width=1)
+    img.alpha_composite(overlay)
+
+
+def add_glow(img: Image.Image, center: tuple[int, int], radius: int, color: tuple[int, int, int, int]) -> None:
+    overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+    d = ImageDraw.Draw(overlay)
+    cx, cy = center
+    d.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=color)
     overlay = overlay.filter(ImageFilter.GaussianBlur(radius // 2))
-    base.alpha_composite(overlay)
+    img.alpha_composite(overlay)
 
 
-def draw() -> Image.Image:
-    bg = make_gradient().convert("RGBA")
-
-    # Atmospheric glows
-    draw_glow(bg, (430, 210), 260, (22, 185, 190, 95))
-    draw_glow(bg, (1270, 130), 210, (57, 129, 255, 80))
-    draw_glow(bg, (1450, 500), 250, (12, 109, 156, 70))
-
-    # Subtle center vignette
-    vignette = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
-    vd = ImageDraw.Draw(vignette)
-    vd.rectangle((0, 0, WIDTH, HEIGHT), fill=(0, 0, 0, 35))
-    vd.ellipse((170, 80, WIDTH - 120, HEIGHT - 40), fill=(0, 0, 0, 0))
-    vignette = vignette.filter(ImageFilter.GaussianBlur(30))
-    bg.alpha_composite(vignette)
+def draw_banner() -> Image.Image:
+    bg = make_background()
+    add_glow(bg, (360, 160), 280, (20, 160, 120, 80))
+    add_glow(bg, (1360, 180), 240, (24, 120, 96, 75))
+    add_glow(bg, (1320, 510), 240, (10, 92, 70, 60))
+    add_scanlines(bg)
 
     d = ImageDraw.Draw(bg)
 
-    # Left glass panel
-    d.rounded_rectangle((54, 34, 920, 560), radius=28, fill=(8, 13, 22, 165), outline=(67, 175, 190, 130), width=2)
+    left = (52, 36, 920, 560)
+    right = (968, 36, 1738, 560)
 
-    title_font = load_font(152, mono=True)
-    sub_title_font = load_font(146, mono=True)
-    meta_font = load_font(60)
-    label_font = load_font(32, mono=True)
-    right_title_font = load_font(52, mono=True)
-    right_line_font = load_font(30, mono=True)
-    footer_font = load_font(28, mono=True)
+    d.rounded_rectangle(left, radius=30, fill=PANEL, outline=BORDER, width=2)
+    d.rounded_rectangle(right, radius=30, fill=PANEL, outline=BORDER, width=2)
 
-    # Title with glow/shadow layers
-    for dx, dy, col in [(-3, -3, (8, 18, 32, 210)), (3, 3, (8, 18, 32, 210)), (0, 0, (167, 255, 250, 255))]:
-        d.text((88 + dx, 56 + dy), "CODEX", font=title_font, fill=col)
-    for dx, dy, col in [(-3, -3, (8, 18, 32, 210)), (3, 3, (8, 18, 32, 210)), (0, 0, (134, 236, 255, 255))]:
-        d.text((88 + dx, 202 + dy), "SEO", font=sub_title_font, fill=col)
+    title_font = load_font(136, mono=True, bold=True)
+    sub_title_font = load_font(128, mono=True, bold=True)
+    meta_font = load_font(60, mono=False, bold=True)
+    small_mono = load_font(26, mono=True, bold=False)
+    tag_font = load_font(26, mono=True, bold=True)
+    right_title = load_font(54, mono=True, bold=True)
 
-    d.line((86, 372, 866, 372), fill=(119, 224, 238, 230), width=6)
-    d.text((88, 406), "AI-POWERED SEO ANALYSIS", font=meta_font, fill=(230, 246, 255, 245))
+    # Left panel title
+    for dx, dy, color in [(-2, -2, (0, 22, 12, 230)), (2, 2, (0, 22, 12, 230)), (0, 0, NEON)]:
+        d.text((92 + dx, 54 + dy), "CODEX", font=title_font, fill=color)
+    for dx, dy, color in [(-2, -2, (0, 22, 12, 230)), (2, 2, (0, 22, 12, 230)), (0, 0, NEON_SOFT)]:
+        d.text((92 + dx, 195 + dy), "SEO", font=sub_title_font, fill=color)
 
-    d.rounded_rectangle((86, 490, 868, 544), radius=12, fill=(13, 24, 35, 210), outline=(78, 183, 198, 170), width=2)
-    d.text((112, 504), "CODEX-FIRST  |  RUNNER-READY  |  SECURITY-HARDENED", font=label_font, fill=(170, 242, 250, 255))
+    d.line((88, 372, 864, 372), fill=(78, 233, 173, 255), width=6)
+    d.text((88, 406), "AI-POWERED SEO ANALYSIS", font=meta_font, fill=TEXT)
 
-    # Right command panel
-    d.rounded_rectangle((968, 34, 1738, 560), radius=26, fill=(8, 12, 20, 175), outline=(76, 170, 230, 130), width=2)
-    d.text((1000, 62), "WORKFLOW ENTRYPOINTS", font=right_title_font, fill=(184, 223, 255, 250))
-    d.line((1000, 128, 1708, 128), fill=(97, 167, 255, 220), width=4)
+    d.rounded_rectangle((86, 492, 864, 544), radius=14, fill=(2, 17, 11, 220), outline=(72, 223, 164, 210), width=2)
+    d.text((112, 505), "CODEX-FIRST  |  RUNNER-READY  |  HARDENED", font=tag_font, fill=(156, 255, 213, 255))
+
+    # Right panel, intent style (not slash-command style)
+    d.text((1000, 62), "PROMPT INTENTS", font=right_title, fill=(164, 255, 217, 255))
+    d.line((1000, 126, 1710, 126), fill=(83, 230, 169, 255), width=4)
 
     lines = [
-        "seo-audit <url>",
-        "seo-page <url>",
-        "seo-technical <url>",
-        "seo-content <url>",
-        "seo-schema analyze|generate",
-        "seo-sitemap analyze|generate",
-        "seo-geo <url>",
-        "seo-images <url>",
-        "seo-hreflang validate|generate",
-        "seo-programmatic analyze|plan",
-        "seo-competitor-pages <mode>",
-        "seo-plan <industry>",
+        "$ full seo audit for <url>",
+        "$ deep page analysis for <url>",
+        "$ technical seo review for <url>",
+        "$ content quality + eeat for <url>",
+        "$ schema analyze or generate",
+        "$ sitemap analyze or generate",
+        "$ geo / ai citation check",
+        "$ hreflang validate or generate",
+        "$ programmatic analyze or plan",
+        "$ competitor page strategy + plan",
     ]
-    y = 154
-    for line in lines:
-        d.text((1002, y), f"> {line}", font=right_line_font, fill=(203, 228, 255, 238))
-        y += 31
 
-    d.text((1002, 536), "codex-seo // deterministic runners + skill orchestration", font=footer_font, fill=(143, 195, 235, 255))
+    max_line_width = right[2] - right[0] - 64
+    line_font = load_font(22, mono=True, bold=False)
+    y = 152
+    for line in lines:
+        safe_line = clamp_text(d, line, line_font, max_line_width)
+        d.text((1002, y), safe_line, font=line_font, fill=(194, 255, 229, 242))
+        y += 33
+
+    footer_font = load_font(14, mono=True, bold=False)
+    footer_text = clamp_text(
+        d,
+        "codex-seo // deterministic runners + skill orchestration",
+        footer_font,
+        max_line_width,
+    )
+    d.text((1002, 532), footer_text, font=footer_font, fill=(126, 233, 184, 255))
 
     return bg.convert("RGB")
 
 
 def main() -> None:
-    root = Path(__file__).resolve().parents[1]
-    out_path = root / "screenshots" / "cover-image.jpeg"
-    image = draw()
-    image.save(out_path, format="JPEG", quality=95, optimize=True)
-    print(f"Wrote {out_path}")
+    out = Path(__file__).resolve().parents[1] / "screenshots" / "cover-image.jpeg"
+    draw_banner().save(out, format="JPEG", quality=95, optimize=True)
+    print(f"Wrote {out}")
 
 
 if __name__ == "__main__":
