@@ -6,6 +6,8 @@
 
 Codex-first SEO skill suite with deterministic Python runners for repeatable audits, planning, and SEO artifact generation.
 
+> Independent community project, not affiliated with or endorsed by OpenAI.
+> 
 > Built on the original **Claude SEO** concept by **Daniel** ([AgriciDaniel](https://github.com/AgriciDaniel)).  
 > Original project: [AgriciDaniel/claude-seo](https://github.com/AgriciDaniel/claude-seo)
 
@@ -185,6 +187,13 @@ All core functionality in this repository is open source and does not require an
 
 If you want to join the broader community:
 - [AI Marketing Hub Pro](https://www.skool.com/ai-marketing-hub-pro/about?ref=59f96e9d9f2b4047b53627692d8c8f0c) *(affiliate link, I may earn a commission if you join).*
+
+## Branding and Disclosure Notes
+
+- This is an independent project and is not affiliated with or endorsed by OpenAI.
+- "Codex" is used to describe workflow compatibility, not official ownership.
+- This repository does not include official OpenAI logos or brand assets.
+- The optional community link above is an affiliate referral link.
 
 ## License
 
