@@ -14,8 +14,6 @@ When building a plan:
 4. Include competitor gap hypotheses, but mark them as assumptions until verified.
 5. Keep recommendations tied to the selected industry template in `skills/seo-plan/assets/`.
 
-When deterministic execution is required, run `skills/seo-plan/scripts/run_plan.py` and use outputs (`SEO-STRATEGY.md`, `COMPETITOR-ANALYSIS.md`, `CONTENT-CALENDAR.md`, `IMPLEMENTATION-ROADMAP.md`, `SITE-STRUCTURE.md`, `SUMMARY.json`) as baseline deliverables.
-
 ## Prioritization Logic
 
 - Critical: undefined goals/KPIs, no architecture plan, no execution ownership

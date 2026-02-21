@@ -15,8 +15,6 @@ When validating hreflang implementations:
 5. Check canonical alignment and protocol consistency.
 6. Flag cross-domain sets that require stronger verification discipline.
 
-When deterministic execution is required, run `skills/seo-hreflang/scripts/run_hreflang.py` and use outputs (`HREFLANG-VALIDATION-REPORT.md`, `HREFLANG-GENERATION-REPORT.md`, `SUMMARY.json`, and method artifacts) as baseline deliverables.
-
 ## Prioritization Logic
 
 - Critical: missing self-reference or missing return-tag reciprocity

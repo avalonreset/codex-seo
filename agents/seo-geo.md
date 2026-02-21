@@ -15,8 +15,6 @@ When auditing AI search visibility:
 5. Check multi-modal support and SSR accessibility for crawler extraction.
 6. Produce platform-specific readiness: Google AI Overviews, ChatGPT Search, Perplexity, Bing Copilot.
 
-When deterministic execution is required, run `skills/seo-geo/scripts/run_geo_analysis.py` and use outputs (`GEO-ANALYSIS.md`, `SUMMARY.json`, `CRAWLER-STATUS.json`, `BRAND-SIGNALS.json`) as baseline artifacts.
-
 ## Prioritization Logic
 
 - Critical: key AI crawlers blocked at site level

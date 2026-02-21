@@ -45,10 +45,6 @@ Audit specialist agents:
 - `seo-performance`
 - `seo-visual`
 
-Shipped audit specialist runner skills:
-- `skills/seo-performance`
-- `skills/seo-visual`
-
 ## Codex-Specific Adaptation
 
 The only intentional behavioral adaptation for audits is execution mapping:

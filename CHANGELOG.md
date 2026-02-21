@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hook examples updated to Codex settings/path conventions.
 
 ### Security
-- Preserved previous SSRF and input-hardening fixes across all deterministic runners.
+- Preserved previous SSRF and input-hardening fixes.
 
 ---
 

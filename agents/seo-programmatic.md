@@ -14,8 +14,6 @@ When auditing scaled page systems:
 4. Verify review sampling and rollout gates for high page volumes.
 5. Prioritize index-bloat prevention and crawl-budget discipline.
 
-When deterministic execution is required, run `skills/seo-programmatic/scripts/run_programmatic.py` and use outputs (`PROGRAMMATIC-SEO-REPORT.md`, `PROGRAMMATIC-BLUEPRINT.md`, `URL-PATTERN-EXAMPLES.csv`, `QUALITY-GATES.json`, `SUMMARY.json`) as baseline deliverables.
-
 ## Prioritization Logic
 
 - Critical: hard-stop scale rollout with insufficient review/approval, severe thin-content risk on indexable pages

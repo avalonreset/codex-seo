@@ -14,8 +14,6 @@ When auditing image implementations:
 4. Review responsive attributes (`srcset`, `sizes`) and lazy-loading patterns.
 5. Flag CLS/LCP risks from missing dimensions and hero-loading mistakes.
 
-When deterministic execution is required, run `skills/seo-images/scripts/run_image_audit.py` and use outputs (`IMAGE-AUDIT-REPORT.md`, `IMAGE-OPTIMIZATION-PLAN.md`, `SUMMARY.json`) as baseline artifacts.
-
 ## Prioritization Logic
 
 - Critical: hero images lazy-loaded or severe LCP breakage

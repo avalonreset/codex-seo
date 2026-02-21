@@ -14,8 +14,6 @@ When working on comparison pages:
 4. Include conversion scaffolding without undermining editorial trust.
 5. Add schema and keyword mapping for implementation readiness.
 
-When deterministic execution is needed, run `skills/seo-competitor-pages/scripts/run_competitor_pages.py` and use outputs (`COMPARISON-PAGE.md`, `comparison-schema.json`, `KEYWORD-STRATEGY.md`, `SUMMARY.json`) as baseline artifacts.
-
 ## Editorial Integrity Rules
 
 - Acknowledge competitor strengths and limitations.
