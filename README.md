@@ -1,8 +1,8 @@
-<!-- Updated: 2026-02-21 -->
-
-![Codex SEO](screenshots/cover-image.jpeg?v=20260221h)
+![Codex SEO Banner](screenshots/codex-seo-banner.jpeg)
 
 # Codex SEO
+
+A suite of 12+ professional-grade SEO analysis tools, running natively inside Codex.
 
 Authentic Codex port of the original Claude SEO project.
 
@@ -49,7 +49,7 @@ Audit specialist agents:
 
 The only intentional behavioral adaptation for audits is execution mapping:
 - Claude subagent delegation maps to Codex multi-agent delegation (`spawn_agent` + `wait`)
-- In Codex chat, `/seo audit` should default to this multi-agent path. Deterministic runners are for explicit CLI/reproducibility use cases.
+- In Codex chat, `/seo audit` should default to this multi-agent path.
 
 Everything else should remain aligned with upstream Claude SEO skill intent and output structure.
 
@@ -111,13 +111,13 @@ Use normal Codex prompts, for example:
 Expected audit behavior:
 1. fetches core pages
 2. delegates to specialist agents in parallel (when Codex multi-agent is enabled)
-3. merges findings into `FULL-AUDIT-REPORT.md` and `ACTION-PLAN.md` (plus HTML/PDF artifacts in runner mode)
+3. merges findings into `FULL-AUDIT-REPORT.md` and `ACTION-PLAN.md`
 
 ## Architecture
 
 ```text
 seo/                            # Orchestrator skill + references
-skills/seo-*/                   # primary skills + specialist audit runners
+skills/seo-*/                   # Specialized skills
 agents/seo-*.md                 # Specialist agent profiles
 schema/templates.json           # Schema templates
 ```
