@@ -143,10 +143,9 @@ MIT License. See [LICENSE](LICENSE).
 - Original project and concept: [AgriciDaniel/claude-seo](https://github.com/AgriciDaniel/claude-seo)
 - Original Claude SEO demo: [Watch on YouTube](https://www.youtube.com/watch?v=COMnNlUakQk)
 - Codex port and maintenance: [avalonreset/codex-seo](https://github.com/avalonreset/codex-seo)
+- Related Gemini Port: [avalonreset/gemini-seo](https://github.com/avalonreset/gemini-seo)
 
 ## Community
 
-If you want deeper tactical training, templates, and live implementation breakdowns, you can join:
-**[AI Marketing Hub Pro](https://www.skool.com/ai-marketing-hub-pro/about?ref=59f96e9d9f2b4047b53627692d8c8f0c)**
-
-Disclosure: The link above is a referral link. If you join through it, I may receive a commission at no additional cost to you.
+Join the community: [AI Marketing Hub Pro](https://www.skool.com/ai-marketing-hub-pro/about?ref=59f96e9d9f2b4047b53627692d8c8f0c).
+Disclosure: Referral link; I may earn a commission at no additional cost to you.
