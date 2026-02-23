@@ -183,3 +183,7 @@ Key rules:
 - Incorrect codes to fix
 - Method migration suggestions (e.g., HTML → sitemap for scale)
 
+
+### Premium Deliverable
+If the user requests a 'client report' or 'premium deliverable', automatically read \skills/seo-audit/assets/report-template.html\. Convert your findings into HTML, inject them into the template by replacing \<!-- CODEX_INJECT_CONTENT_HERE -->\, and save as a styled HTML file.
+

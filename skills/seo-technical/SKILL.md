@@ -147,3 +147,7 @@ Google updated its JavaScript SEO documentation in December 2025 with critical c
 ### Medium Priority (fix within 1 month)
 ### Low Priority (backlog)
 
+
+### Premium Deliverable
+If the user requests a 'client report' or 'premium deliverable', automatically read \skills/seo-audit/assets/report-template.html\. Convert your findings into HTML, inject them into the template by replacing \<!-- CODEX_INJECT_CONTENT_HERE -->\, and save as a styled HTML file.
+
