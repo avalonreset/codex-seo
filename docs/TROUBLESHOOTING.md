@@ -26,7 +26,7 @@ Codex
 
 4. Re-run installer:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AgriciDaniel/Codex-seo/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/avalonreset/codex-seo/main/install.sh | bash
 ```
 
 ---
@@ -66,7 +66,7 @@ ls ~/.Codex/skills/seo/requirements.txt
 
 If missing, download it directly:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AgriciDaniel/Codex-seo/main/requirements.txt \
+curl -fsSL https://raw.githubusercontent.com/avalonreset/codex-seo/main/requirements.txt \
   -o ~/.Codex/skills/seo/requirements.txt
 ```
 
@@ -234,4 +234,3 @@ python3 ~/.Codex/skills/seo/scripts/parse_html.py page.html --json
 # Test screenshot
 python3 ~/.Codex/skills/seo/scripts/capture_screenshot.py https://example.com
 ```
-

@@ -141,6 +141,7 @@ MIT License. See [LICENSE](LICENSE).
 ## Attribution
 
 - Original project and concept: [AgriciDaniel/claude-seo](https://github.com/AgriciDaniel/claude-seo)
+- Original Claude SEO demo: [Watch on YouTube](https://www.youtube.com/watch?v=COMnNlUakQk)
 - Codex port and maintenance: [avalonreset/codex-seo](https://github.com/avalonreset/codex-seo)
 
 ## Community
